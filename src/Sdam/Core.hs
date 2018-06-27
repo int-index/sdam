@@ -79,16 +79,17 @@ mkFieldId ty (FieldName s) =
 newtype Ref = Ref Word
   deriving newtype (Eq, Ord)
 
-data Space =
+data Space p =
   Space
-    { spaceMap :: Map Ref (Object Ref),
+    { spaceMap :: Map Ref (Object p Ref),
       spaceNextRef :: Ref }
 
-data Object a = Object TyId (Value a)
+data Object p a = Object TyId (Value p a)
 
-data Value a =
+data Value p a =
   ValueRec (Map FieldId a) |
-  ValueSeq [a]
+  ValueSeq [a] |
+  ValuePrim p
 
 --------------------------------------------------------------------------------
 -- Paths

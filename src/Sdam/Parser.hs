@@ -1,7 +1,11 @@
 {-# LANGUAGE LambdaCase, DerivingStrategies, RecordWildCards,
              GeneralizedNewtypeDeriving #-}
 
-module Sdam.Parser where
+module Sdam.Parser
+  ( parse,
+    pEnv,
+    Err(..)
+  ) where
 
 import Control.Monad
 import Data.List
@@ -169,9 +173,6 @@ substTyDecl metaDecls (tyName, ty') =
 pDecl :: Parser Decl
 pDecl = TyDecl <$> pTyDecl <|> MetaDecl <$> pMetaDecl
 
-pTyUnion :: Parser TyUnion
-pTyUnion = TyUnion . Set.fromList <$> pTyName `sepBy` pBar
-
 pLetters :: Parser String
 pLetters = takeWhile1P (Just "letter") Char.isLetter
 
@@ -238,18 +239,3 @@ getDups =
 
 snd3 :: (a, b, c) -> b
 snd3 (_, x, _) = x
-
-example :: String
-example = unlines
-  [ "Lam =",
-    "  var: Str,",
-    "  ty: <expr>,",
-    "  body: <expr>;",
-    "",
-    "Var = name: Str, i: Nat;",
-    "",
-    "App = fn, arg: <expr>;",
-    "",
-    "Tup = <expr>*;",
-    "",
-    "<expr> = Lam | Pi | App | Var | Tup;" ]

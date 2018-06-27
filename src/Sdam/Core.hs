@@ -14,6 +14,8 @@ module Sdam.Core
     mkTyId,
     FieldId(..),
     mkFieldId,
+    Ref(..),
+    Space(..),
     Object(..),
     Value(..),
 
@@ -23,6 +25,7 @@ module Sdam.Core
     Index(..)
   ) where
 
+import Data.Word (Word)
 import Data.Map (Map)
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -73,11 +76,19 @@ mkFieldId ty (FieldName s) =
   let TyId tyFp = mkTyId ty
   in FieldId (fingerprintFingerprints [tyFp, fingerprintString s])
 
-data Object = Object TyId Value
+newtype Ref = Ref Word
+  deriving newtype (Eq, Ord)
 
-data Value =
-  ValueRec (Map FieldId Object) |
-  ValueSeq [Object]
+data Space =
+  Space
+    { spaceMap :: Map Ref (Object Ref),
+      spaceNextRef :: Ref }
+
+data Object a = Object TyId (Value a)
+
+data Value a =
+  ValueRec (Map FieldId a) |
+  ValueSeq [a]
 
 --------------------------------------------------------------------------------
 -- Paths

@@ -1,0 +1,17 @@
+Lam =
+  var: Str,
+  ty: <expr>,
+  body: <expr>;
+
+Pi =
+  var: Str,
+  ty: <expr>,
+  body: <expr>;
+
+Var = name: Str, i: Nat;
+
+App = fn, arg: <expr>;
+
+Tup = <expr>*;
+
+<expr> = Lam | Pi | App | Var | Tup;

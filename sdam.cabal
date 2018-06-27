@@ -1,0 +1,14 @@
+cabal-version: 2.1
+name: sdam
+version: 0
+build-type: Simple
+
+library
+  exposed-modules:
+    Sdam.Core
+    Sdam.Parser
+    Sdam.MetaVar
+  build-depends: base, containers, megaparsec
+  hs-source-dirs: src
+  default-language: Haskell2010
+  ghc-options: -Wall -fno-warn-partial-type-signatures

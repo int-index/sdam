@@ -101,4 +101,4 @@ data PathSegment =
   PathSegmentRec FieldId |
   PathSegmentSeq Index
 
-newtype Index = Index Int
+newtype Index = Index Word

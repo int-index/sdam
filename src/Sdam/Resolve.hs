@@ -2,24 +2,18 @@
              ScopedTypeVariables, NamedFieldPuns #-}
 
 module Sdam.Resolve
-  ( Resolved(..),
-    Err(..),
+  ( Err(..),
     resolve
   ) where
 
 import Data.Set (Set)
 import Data.Map (Map)
+import Data.Primitive.Array (Array)
 import qualified Data.Set as Set
 import qualified Data.Map as Map
+import GHC.Exts (IsList(fromListN, toList))
 
 import Sdam.Core
-
-data Resolved p =
-  Resolved
-    { resRef :: Ref,
-      resPath :: Path,
-      resObject :: Object p (Resolved p),
-      resLoop :: Bool }
 
 data Err = MissingRefs (Set Ref)
 
@@ -108,7 +102,15 @@ resolveObject resolvedSpace unresolvedSpace = go (Visited Set.empty) []
       in
         (accum, missingErr)
 
-traverseWithIndex :: Applicative f => (Index -> a -> f b) -> [a] -> f [b]
+traverseWithIndex ::
+  Applicative f =>
+  (Index -> a -> f b) ->
+  Array a ->
+  f (Array b)
 traverseWithIndex f xs =
-  let f' i x = f (Index i) x
-  in sequenceA $ zipWith f' [0..] xs
+  -- This function can be optimized by using ST and a mutable array.
+  fmap (fromListN n) . sequenceA $
+    zipWith f' [0..] (toList xs)
+  where
+    n = length xs
+    f' i x = f (Index i) x

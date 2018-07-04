@@ -9,7 +9,9 @@ library
     Sdam.Parser
     Sdam.MetaVar
     Sdam.Resolve
-  build-depends: base, containers, megaparsec
+    Sdam.Fingerprint
+    Sdam.Name
+  build-depends: base, containers, megaparsec, parser-combinators, primitive
   hs-source-dirs: src
   default-language: Haskell2010
   ghc-options: -Wall -fno-warn-partial-type-signatures

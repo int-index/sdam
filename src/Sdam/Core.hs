@@ -1,23 +1,37 @@
-{-# LANGUAGE DerivingStrategies, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies, GeneralizedNewtypeDeriving,
+             NamedFieldPuns, StandaloneDeriving #-}
 
 module Sdam.Core
   (
-    -- * Types
+    -- * Names
     TyName(..),
+    tyNameStr,
     FieldName(..),
+    fieldNameStr,
+
+    -- * Types
     Env(..),
     Ty(..),
     TyUnion(..),
 
-    -- * Values
+    -- * References
     TyId(..),
     mkTyId,
+    tyIdToStr,
+    strToTyId,
     FieldId(..),
     mkFieldId,
+    fieldIdToStr,
+    strToFieldId,
     Ref(..),
+    refToStr,
+    strToRef,
+
+    -- * Values
     Space(..),
     Object(..),
     Value(..),
+    Resolved(..),
 
     -- * Paths
     Path(..),
@@ -25,21 +39,35 @@ module Sdam.Core
     Index(..)
   ) where
 
-import Data.Word (Word)
 import Data.Map (Map)
 import Data.Set (Set)
+import Data.Primitive.Array (Array)
+import Data.String (IsString(fromString))
 import qualified Data.Set as Set
-import GHC.Fingerprint
+import Control.Exception (Exception, throw)
+
+import Sdam.Name
+import Sdam.Fingerprint
+
+--------------------------------------------------------------------------------
+-- Names
+--------------------------------------------------------------------------------
+
+newtype TyName = TyName { tyName :: Name }
+  deriving newtype (Eq, Ord, Show, IsString)
+
+tyNameStr :: TyName -> String
+tyNameStr TyName{tyName} = nameToStr tyName
+
+newtype FieldName = FieldName { fieldName :: Name }
+  deriving newtype (Eq, Ord, Show)
+
+fieldNameStr :: FieldName -> String
+fieldNameStr FieldName{fieldName} = nameToStr fieldName
 
 --------------------------------------------------------------------------------
 -- Types
 --------------------------------------------------------------------------------
-
-newtype TyName = TyName { tyNameStr :: String }
-  deriving newtype (Eq, Ord, Show)
-
-newtype FieldName = FieldName { fieldNameStr :: String }
-  deriving newtype (Eq, Ord, Show)
 
 newtype Env = Env { envMap :: Map TyName Ty }
   deriving newtype Show
@@ -59,37 +87,148 @@ instance Monoid TyUnion where
   mempty = TyUnion Set.empty
 
 --------------------------------------------------------------------------------
--- Values
+-- References
 --------------------------------------------------------------------------------
 
-newtype TyId = TyId Fingerprint
+{-
+
+We define 'TyId' and 'FieldId' as fingerprints rather than strings:
+
+* We get fast comparisons this way. Comparing two Word64 is far better than
+  an entire list of characters.
+
+* Name length becomes irrelevant. We wouldn't want longer names to make
+  serialized values to take more space or anything like that.
+
+* Unfortunately, this means we can't pretty-print a 'Value' without consulting
+  an 'Env' because hashing is not invertible.
+
+-}
+
+newtype TyId = TyId { tyIdFingerprint :: Fingerprint }
   deriving newtype (Eq, Ord)
 
 mkTyId :: TyName -> TyId
-mkTyId (TyName s) = TyId (fingerprintString s)
+mkTyId tyName = TyId (fingerprintString (tyNameStr tyName))
 
-newtype FieldId = FieldId Fingerprint
+data InvalidTyIdStr = InvalidTyIdStr String
+  deriving stock Show
+
+instance Exception InvalidTyIdStr
+
+instance IsString TyId where
+  fromString s =
+    case strToTyId s of
+      Nothing -> throw (InvalidTyIdStr s)
+      Just tyId -> tyId
+
+instance Show TyId where
+  showsPrec d tyId = showsPrec d (tyIdToStr tyId)
+
+tyIdToStr :: TyId -> String
+tyIdToStr = fingerprintToString . tyIdFingerprint
+
+strToTyId :: String -> Maybe TyId
+strToTyId = fmap TyId . stringToFingerprint
+
+newtype FieldId = FieldId { fieldIdFingerprint :: Fingerprint }
   deriving newtype (Eq, Ord)
+
+{-
+
+Note that 'FieldId' is made from both 'TyName' and 'FieldName':
+
+* This guarantees that there is no clash between fields with the same name
+  across different types (that is, each type has its own namespace for fields),
+  for example in paths.
+
+* This safeguards against duck typing. We wouldn't want code that abstracts over
+  values by what fields /names/ they have: abstraction should be over meaning,
+  not over strings.
+
+-}
 
 mkFieldId :: TyName -> FieldName -> FieldId
-mkFieldId ty (FieldName s) =
-  let TyId tyFp = mkTyId ty
-  in FieldId (fingerprintFingerprints [tyFp, fingerprintString s])
+mkFieldId ty fieldName =
+  let
+    TyId tyFp = mkTyId ty
+    fldFp = fingerprintString (fieldNameStr fieldName)
+  in
+    FieldId (fingerprintFingerprints [tyFp, fldFp])
 
-newtype Ref = Ref Word
+data InvalidFieldIdStr = InvalidFieldIdStr String
+  deriving stock Show
+
+instance Exception InvalidFieldIdStr
+
+instance IsString FieldId where
+  fromString s =
+    case strToFieldId s of
+      Nothing -> throw (InvalidFieldIdStr s)
+      Just fieldId -> fieldId
+
+instance Show FieldId where
+  showsPrec d fieldId = showsPrec d (fieldIdToStr fieldId)
+
+fieldIdToStr :: FieldId -> String
+fieldIdToStr = fingerprintToString . fieldIdFingerprint
+
+strToFieldId :: String -> Maybe FieldId
+strToFieldId = fmap FieldId . stringToFingerprint
+
+-- References can be generated by incrementing a counter, generating UUIDs,
+-- hashing strings, etc. The only requirement is that the process that
+-- new references are distinct from the previous ones within a single
+-- 'Space'.
+newtype Ref = Ref { refFingerprint :: Fingerprint }
   deriving newtype (Eq, Ord)
 
-data Space p =
-  Space
-    { spaceMap :: Map Ref (Object p Ref),
-      spaceNextRef :: Ref }
+data InvalidRefStr = InvalidRefStr String
+  deriving stock Show
+
+instance Exception InvalidRefStr
+
+instance IsString Ref where
+  fromString s =
+    case strToRef s of
+      Nothing -> throw (InvalidRefStr s)
+      Just ref -> ref
+
+instance Show Ref where
+  showsPrec d ref = showsPrec d (refToStr ref)
+
+refToStr :: Ref -> String
+refToStr = fingerprintToString . refFingerprint
+
+strToRef :: String -> Maybe Ref
+strToRef = fmap Ref . stringToFingerprint
+
+--------------------------------------------------------------------------------
+-- Values
+--------------------------------------------------------------------------------
+
+newtype Space p =
+  Space { spaceMap :: Map Ref (Object p Ref) }
+
+deriving newtype instance Show p => Show (Space p)
 
 data Object p a = Object TyId (Value p a)
 
+deriving stock instance (Show a, Show p) => Show (Object p a)
+
 data Value p a =
   ValueRec (Map FieldId a) |
-  ValueSeq [a] |
+  ValueSeq (Array a) |
   ValuePrim p
+
+deriving stock instance (Show a, Show p) => Show (Value p a)
+
+data Resolved p =
+  Resolved
+    { resRef :: Ref,
+      resPath :: Path,
+      resObject :: Object p (Resolved p),
+      resLoop :: Bool }
 
 --------------------------------------------------------------------------------
 -- Paths

@@ -1,14 +1,19 @@
-{-# LANGUAGE DerivingStrategies, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DerivingStrategies, GeneralizedNewtypeDeriving,
+             NamedFieldPuns #-}
 
 module Sdam.MetaVar where
 
 import Data.Set (Set)
 import qualified Data.Set as Set
 
+import Sdam.Name
 import Sdam.Core
 
-newtype MetaVar = MetaVar { metaVarStr :: String }
+newtype MetaVar = MetaVar { metaVarName :: Name }
   deriving newtype (Eq, Ord)
+
+metaVarStr :: MetaVar -> String
+metaVarStr MetaVar{metaVarName} = nameToStr metaVarName
 
 data Ty' =
   TyRec' [(FieldName, TyU)] |

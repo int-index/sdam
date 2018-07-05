@@ -36,15 +36,17 @@ module Sdam.Core
     -- * Paths
     Path(..),
     PathSegment(..),
-    Index(..)
+    Index,
+    intToIndex,
+    indexToInt,
   ) where
 
 import Data.Map (Map)
 import Data.Set (Set)
-import Data.Primitive.Array (Array)
+import Data.Sequence (Seq)
 import Data.String (IsString(fromString))
 import qualified Data.Set as Set
-import Control.Exception (Exception, throw)
+import Control.Exception (Exception, ArithException(Underflow), throw)
 
 import Sdam.Name
 import Sdam.Fingerprint
@@ -74,7 +76,8 @@ newtype Env = Env { envMap :: Map TyName Ty }
 
 data Ty =
   TyRec (Map FieldName TyUnion) |
-  TySeq TyUnion
+  TySeq TyUnion |
+  TyStr
   deriving stock Show
 
 data TyUnion = TyUnion (Set TyName)
@@ -207,27 +210,25 @@ strToRef = fmap Ref . stringToFingerprint
 -- Values
 --------------------------------------------------------------------------------
 
-newtype Space p =
-  Space { spaceMap :: Map Ref (Object p Ref) }
+newtype Space =
+  Space { spaceMap :: Map Ref (Object Ref) }
+  deriving newtype Show
 
-deriving newtype instance Show p => Show (Space p)
+data Object a = Object TyId (Value a)
 
-data Object p a = Object TyId (Value p a)
+deriving stock instance Show a => Show (Object a)
 
-deriving stock instance (Show a, Show p) => Show (Object p a)
-
-data Value p a =
+data Value a =
   ValueRec (Map FieldId a) |
-  ValueSeq (Array a) |
-  ValuePrim p
+  ValueSeq (Seq a) |
+  ValueStr String
+  deriving stock Show
 
-deriving stock instance (Show a, Show p) => Show (Value p a)
-
-data Resolved p =
+data Resolved =
   Resolved
     { resRef :: Ref,
       resPath :: Path,
-      resObject :: Object p (Resolved p),
+      resObject :: Object Resolved,
       resLoop :: Bool }
 
 --------------------------------------------------------------------------------
@@ -240,4 +241,14 @@ data PathSegment =
   PathSegmentRec FieldId |
   PathSegmentSeq Index
 
-newtype Index = Index Word
+-- Invariant: non-negative.
+newtype Index = Index Int
+
+intToIndex :: Int -> Index
+intToIndex i =
+  if i < 0
+    then throw Underflow
+    else Index i
+
+indexToInt :: Index -> Int
+indexToInt (Index i) = i

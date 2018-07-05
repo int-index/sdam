@@ -17,7 +17,8 @@ metaVarStr MetaVar{metaVarName} = nameToStr metaVarName
 
 data Ty' =
   TyRec' [(FieldName, TyU)] |
-  TySeq' TyU
+  TySeq' TyU |
+  TyStr'
 
 data TyU =
   TyU

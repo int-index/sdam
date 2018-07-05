@@ -20,15 +20,15 @@ import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Graph
 import Data.Map (Map)
+import Data.Sequence (Seq)
 import Data.Semigroup
-import Data.Primitive.Array (Array)
+import Data.Maybe
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import GHC.Exts (IsList(fromList))
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import qualified Text.Megaparsec.Internal as PI
 import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Control.Monad.Combinators.NonEmpty as NonEmpty
 
@@ -198,6 +198,8 @@ substTyDecl metaDecls (tyName, ty') =
           tyUnion <- substTyU metaDecls tyU
           return (fieldName, tyUnion)
       return (tyName, TyRec (Map.fromList fields))
+    TyStr' ->
+      return (tyName, TyStr)
 
 pDecl :: Parser EnvParseErr Decl
 pDecl = TyDecl <$> pTyDecl <|> MetaDecl <$> pMetaDecl
@@ -235,6 +237,7 @@ pTyDecl = do
 
 pTy :: Parser EnvParseErr Ty'
 pTy =
+  TyStr' <$ pSymbol "!str" <|>
   TyRec' <$> try pRecTy <|>
   TySeq' <$> pSeqTy
 
@@ -260,19 +263,15 @@ pMetaVar = pLexeme $ MetaVar <$> between (char '<') (char '>') pName
 -- Space
 --------------------------------------------------------------------------------
 
-data SpaceParseErr pErr =
+data SpaceParseErr =
   SpaceInvalidRef String |
   SpaceInvalidTyId String |
   SpaceInvalidFieldId String |
   SpaceConflictingFieldDefs Ref [FieldId] |
-  SpaceConflictingObjectDefs [Ref] |
-  SpacePrimParseErr pErr
+  SpaceConflictingObjectDefs [Ref]
   deriving stock (Eq, Ord)
 
-instance
-  ShowErrorComponent pErr =>
-  ShowErrorComponent (SpaceParseErr pErr)
-  where
+instance ShowErrorComponent SpaceParseErr where
     showErrorComponent = \case
       SpaceInvalidRef str ->
         "invalid ref: " ++ show str
@@ -286,38 +285,29 @@ instance
       SpaceConflictingObjectDefs refs ->
         "conflicting object refs: " ++
         concat (intersperse ", " (map refToStr refs))
-      SpacePrimParseErr pErr -> showErrorComponent pErr
 
-pSpace :: Ord pErr => Parser pErr p -> Parser (SpaceParseErr pErr) (Space p)
-pSpace pPrim = do
-  defs <- many (pDef pPrim)
+pSpace :: Parser SpaceParseErr Space
+pSpace = do
+  defs <- many pDef
   let dups = getDups (map fst defs)
   unless (null dups) $ customFailure (SpaceConflictingObjectDefs dups)
   return Space{ spaceMap = Map.fromList defs }
 
-pDef ::
-  Ord pErr =>
-  Parser pErr p ->
-  Parser (SpaceParseErr pErr) (Ref, Object p Ref)
-pDef pPrim = do
+pDef :: Parser SpaceParseErr (Ref, Object Ref)
+pDef = do
   ref <- pRef
   pColon
-  obj <- pObject pPrim
+  obj <- pObject
   pSemicolon
   return (ref, obj)
 
-pObject ::
-  Ord pErr =>
-  Parser pErr p ->
-  Parser (SpaceParseErr pErr) (Object p Ref)
-pObject pPrim = do
+pObject :: Parser SpaceParseErr (Object Ref)
+pObject = do
   (tyId, mTyName) <- pTyId
-  v <- pValue pPrim mTyName
+  v <- pValue mTyName
   return (Object tyId v)
 
-pRef ::
-  Ord pErr =>
-  Parser (SpaceParseErr pErr) Ref
+pRef :: Parser SpaceParseErr Ref
 pRef = pLexeme $ do
   void (char '#')
   str <- takeWhile1P Nothing isFingerprintChar
@@ -325,9 +315,7 @@ pRef = pLexeme $ do
     Nothing -> customFailure (SpaceInvalidRef str)
     Just ref -> return ref
 
-pTyId ::
-  Ord pErr =>
-  Parser (SpaceParseErr pErr) (TyId, Maybe TyName)
+pTyId :: Parser SpaceParseErr (TyId, Maybe TyName)
 pTyId = pLexeme $ byName <|> byId
   where
     byName = do
@@ -340,10 +328,7 @@ pTyId = pLexeme $ byName <|> byId
         Nothing -> customFailure (SpaceInvalidTyId str)
         Just tyId -> return (tyId, Nothing)
 
-pFieldId ::
-  Ord pErr =>
-  Maybe TyName ->
-  Parser (SpaceParseErr pErr) FieldId
+pFieldId :: Maybe TyName -> Parser SpaceParseErr FieldId
 pFieldId mTyName = pLexeme $ try byFullName <|> byName <|> byId
   where
     byFullName = do
@@ -364,34 +349,32 @@ pFieldId mTyName = pLexeme $ try byFullName <|> byName <|> byId
         Nothing -> customFailure (SpaceInvalidFieldId str)
         Just fieldId -> return fieldId
 
-pValue ::
-  Ord pErr =>
-  Parser pErr p ->
-  Maybe TyName ->
-  Parser (SpaceParseErr pErr) (Value p Ref)
-pValue pPrim mTyName =
-  try pStruct <|>
-  ValuePrim <$> withParsecT SpacePrimParseErr pPrim
-  where
-    pStruct =
-      ValueSeq <$> pValueSeq <|>
-      ValueRec <$> pValueRec mTyName
+pValue :: Maybe TyName -> Parser SpaceParseErr (Value Ref)
+pValue mTyName =
+  ValueStr <$> pValueStr <|>
+  ValueSeq <$> pValueSeq <|>
+  ValueRec <$> pValueRec mTyName
 
-pValueSeq :: Ord pErr => Parser (SpaceParseErr pErr) (Array Ref)
+pValueSeq :: Parser SpaceParseErr (Seq Ref)
 pValueSeq =
   between (pSymbol "[") (pSymbol "]") $
   fromList <$> (pRef `sepBy` pComma)
 
-pValueRec ::
-  Ord pErr =>
-  Maybe TyName ->
-  Parser (SpaceParseErr pErr) (Map FieldId Ref)
+pValueRec :: Maybe TyName -> Parser SpaceParseErr (Map FieldId Ref)
 pValueRec mTyName = Map.fromList <$> (pFieldDef mTyName `sepBy` pComma)
 
-pFieldDef ::
-  Ord pErr =>
-  Maybe TyName ->
-  Parser (SpaceParseErr pErr) (FieldId, Ref)
+pValueStr :: Parser SpaceParseErr String
+pValueStr = do
+  void (char '\"')
+  catMaybes <$> manyTill pChar (char '\"')
+  where
+    pChar :: Parser SpaceParseErr (Maybe Char)
+    pChar =
+      (Just <$> L.charLiteral) <|>
+      (Nothing <$ string "\\&") <|>
+      (Just <$> anyChar)
+
+pFieldDef :: Maybe TyName -> Parser SpaceParseErr (FieldId, Ref)
 pFieldDef mTyName = do
   fieldId <- pFieldId mTyName
   pSymbol "="
@@ -411,18 +394,3 @@ getDups =
 
 snd3 :: (a, b, c) -> b
 snd3 (_, x, _) = x
-
-mapParseError :: Ord e'
-  => (e -> e')
-  -> ParseError t e
-  -> ParseError t e'
-mapParseError _ (TrivialError s u p) = TrivialError s u p
-mapParseError f (FancyError s x) = FancyError s (Set.map (fmap f) x)
-
-withParsecT :: (Monad m, Ord e')
-  => (e -> e')
-  -> ParsecT e s m a
-  -> ParsecT e' s m a
-withParsecT f p =
-  PI.ParsecT $ \s cok cerr eok eerr ->
-    PI.unParser p s cok (cerr . mapParseError f) eok (eerr . mapParseError f)

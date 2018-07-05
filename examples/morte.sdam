@@ -1,17 +1,23 @@
+Nat = !str; /* natural number in decimal notation */
+
+Var = !str; /* Morte identifier */
+
+IVar = var: Var, index: Nat;
+
 Lam =
-  var: Str,
+  var: Var,
   ty: <expr>,
   body: <expr>;
 
 Pi =
-  var: Str,
+  var: Var,
   ty: <expr>,
   body: <expr>;
-
-Var = name: Str, i: Nat;
 
 App = fn, arg: <expr>;
 
 Tup = <expr>*;
 
-<expr> = Lam | Pi | App | Var | Tup;
+Star; Box; <const> = Star | Box;
+
+<expr> = Lam | Pi | App | Var | IVar | Tup | <const>;

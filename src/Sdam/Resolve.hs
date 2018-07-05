@@ -8,16 +8,15 @@ module Sdam.Resolve
 
 import Data.Set (Set)
 import Data.Map (Map)
-import Data.Primitive.Array (Array)
 import qualified Data.Set as Set
 import qualified Data.Map as Map
-import GHC.Exts (IsList(fromListN, toList))
+import qualified Data.Sequence as Seq
 
 import Sdam.Core
 
 data Err = MissingRefs (Set Ref)
 
-resolve :: Ref -> Space p -> Either Err (Resolved p)
+resolve :: Ref -> Space -> Either Err Resolved
 resolve headRef space = do
   let
     unresolvedSpace = spaceMap space
@@ -34,24 +33,23 @@ newtype Missing = Missing { missingRefs :: Set Ref }
 
 type Writer = (,)
 
-newtype Accum p = Accum (Missing, Map Ref (Resolved p))
+newtype Accum = Accum (Missing, Map Ref Resolved)
   deriving newtype (Semigroup, Monoid)
 
 resolveObject ::
-  forall p.
-  Map Ref (Resolved p) ->
-  Map Ref (Object p Ref) ->
+  Map Ref Resolved ->
+  Map Ref (Object Ref) ->
   Ref ->
-  Writer (Accum p) (Resolved p)
+  Writer Accum Resolved
 resolveObject resolvedSpace unresolvedSpace = go (Visited Set.empty) []
   where
-    go :: Visited -> [PathSegment] -> Ref -> Writer (Accum p) (Resolved p)
+    go :: Visited -> [PathSegment] -> Ref -> Writer Accum Resolved
     go Visited{visitedRefs} rpath ref =
       if Set.member ref visitedRefs
       then goVisited ref
       else goUnvisited Visited{visitedRefs} rpath ref
 
-    goVisited :: Ref -> Writer (Accum p) (Resolved p)
+    goVisited :: Ref -> Writer Accum Resolved
     goVisited ref =
         -- (Map.!) is safe because if (Set.member ref visitedRefs), then
         -- we must have added the relevant object to 'resolvedSpace'.
@@ -62,7 +60,7 @@ resolveObject resolvedSpace unresolvedSpace = go (Visited Set.empty) []
       Visited ->
       [PathSegment] ->
       Ref ->
-      Writer (Accum p) (Resolved p)
+      Writer Accum Resolved
     goUnvisited Visited{visitedRefs} rpath ref =
       case Map.lookup ref unresolvedSpace of
         Nothing -> reportMissing ref
@@ -82,17 +80,17 @@ resolveObject resolvedSpace unresolvedSpace = go (Visited Set.empty) []
             visited' = Visited (Set.insert ref visitedRefs)
           case value of
             ValueSeq xs -> do
-              let visit i = go visited' (PathSegmentSeq i : rpath)
-              xs' <- traverseWithIndex visit xs
+              let visit i = go visited' (PathSegmentSeq (intToIndex i) : rpath)
+              xs' <- Seq.traverseWithIndex visit xs
               retValue (ValueSeq xs')
             ValueRec fields -> do
               let visit fieldId = go visited' (PathSegmentRec fieldId : rpath)
               fields' <- Map.traverseWithKey visit fields
               retValue (ValueRec fields')
-            ValuePrim p -> do
-              retValue (ValuePrim p)
+            ValueStr s -> do
+              retValue (ValueStr s)
 
-    reportMissing :: Ref -> Writer (Accum p) (Resolved p)
+    reportMissing :: Ref -> Writer Accum Resolved
     reportMissing ref =
       let
         accum = Accum (Missing (Set.singleton ref), Map.empty)
@@ -101,16 +99,3 @@ resolveObject resolvedSpace unresolvedSpace = go (Visited Set.empty) []
           \refs before forcing the result"
       in
         (accum, missingErr)
-
-traverseWithIndex ::
-  Applicative f =>
-  (Index -> a -> f b) ->
-  Array a ->
-  f (Array b)
-traverseWithIndex f xs =
-  -- This function can be optimized by using ST and a mutable array.
-  fmap (fromListN n) . sequenceA $
-    zipWith f' [0..] (toList xs)
-  where
-    n = length xs
-    f' i x = f (Index i) x

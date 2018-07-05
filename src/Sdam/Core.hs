@@ -1,5 +1,6 @@
 {-# LANGUAGE DerivingStrategies, GeneralizedNewtypeDeriving,
-             NamedFieldPuns, StandaloneDeriving #-}
+             NamedFieldPuns, StandaloneDeriving, TypeApplications,
+             DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 
 module Sdam.Core
   (
@@ -29,6 +30,7 @@ module Sdam.Core
 
     -- * Values
     Space(..),
+    spaceRoots,
     Object(..),
     Value(..),
     Resolved(..),
@@ -44,8 +46,10 @@ module Sdam.Core
 import Data.Map (Map)
 import Data.Set (Set)
 import Data.Sequence (Seq)
+import Data.Foldable (toList)
 import Data.String (IsString(fromString))
 import qualified Data.Set as Set
+import qualified Data.Map as Map
 import Control.Exception (Exception, ArithException(Underflow), throw)
 
 import Sdam.Name
@@ -214,7 +218,13 @@ newtype Space =
   Space { spaceMap :: Map Ref (Object Ref) }
   deriving newtype Show
 
+spaceRoots :: Space -> Set Ref
+spaceRoots Space{spaceMap} =
+  Map.keysSet spaceMap Set.\\
+  foldMap @(Map _) (Set.fromList . toList @Object) spaceMap
+
 data Object a = Object TyId (Value a)
+  deriving stock (Functor, Foldable, Traversable)
 
 deriving stock instance Show a => Show (Object a)
 
@@ -223,6 +233,7 @@ data Value a =
   ValueSeq (Seq a) |
   ValueStr String
   deriving stock Show
+  deriving stock (Functor, Foldable, Traversable)
 
 data Resolved =
   Resolved

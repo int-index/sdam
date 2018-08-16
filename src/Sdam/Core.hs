@@ -75,6 +75,47 @@ fieldNameStr FieldName{fieldName} = nameToStr fieldName
 -- Types
 --------------------------------------------------------------------------------
 
+{-
+
+An 'Env' defines the available syntactic constructs: records, sequences, and
+strings. In each subtree position (record fields and sequence elements) there
+is a union of types that are allowed in this position. For instance:
+
+  FnApp = fn, arg: <expr>;
+
+'fn' and 'arg' are subtree positions (record fields, in this case), and
+<expr> is a metavariable that defines a 'TyUnion' that describes syntactic
+constructs that can be used in these positions.
+
+This union is by necessity bigger than the actual set of allowed constructs.
+There are various refinements imposed by the type system of the described
+language. For example, 'FnApp' shown above does not disallow expressions like
+
+  fn = negate "hello"
+
+This makes the use of <expr> to define 'fn' and 'arg' inappropriate - it allows
+us to construct invalid expressions.
+
+As another example, when we consider strings that represent variable names, we
+need to track the current scope to decide what strings are allowed.
+
+Tracking scope, types, etc, is not always feasible or even possible, so we
+treat any type union as a static approximation to the set of constructs allowed
+in a given position.
+
+A bit counter-intuitively, this means that the information content in those
+type unions is not the set of constructs that allowed, but the set of
+constructors that is forbidden (because not everything is included in this
+union).
+
+It is a static approximation in a well-defined manner: a type union is the
+tightest restriction that does not need to inspect other values. In other
+words, the meta-language that we have here is not dependently-typed on purpose,
+as it's infeasible to embed the scoping rules and the type system of the
+language that's being described.
+
+-}
+
 newtype Env = Env { envMap :: Map TyName Ty }
   deriving newtype Show
 

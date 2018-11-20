@@ -66,7 +66,7 @@ tyNameStr :: TyName -> String
 tyNameStr TyName{tyName} = nameToStr tyName
 
 newtype FieldName = FieldName { fieldName :: Name }
-  deriving newtype (Eq, Ord, Show)
+  deriving newtype (Eq, Ord, Show, IsString)
 
 fieldNameStr :: FieldName -> String
 fieldNameStr FieldName{fieldName} = nameToStr fieldName

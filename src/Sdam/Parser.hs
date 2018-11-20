@@ -1,8 +1,12 @@
 {-# LANGUAGE LambdaCase, DerivingStrategies, RecordWildCards,
-             GeneralizedNewtypeDeriving #-}
+             GeneralizedNewtypeDeriving, NamedFieldPuns #-}
 
 module Sdam.Parser
   (
+    -- MetaVar
+    MetaVar(..),
+    metaVarStr,
+
     -- Env
     pEnv,
     EnvParseErr(..),
@@ -21,6 +25,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import Data.Graph
 import Data.Map (Map)
 import Data.Sequence (Seq)
+import Data.Set (Set)
 import Data.Semigroup
 import Data.Maybe
 import qualified Data.Map as Map
@@ -35,7 +40,39 @@ import qualified Control.Monad.Combinators.NonEmpty as NonEmpty
 import Sdam.Name
 import Sdam.Fingerprint
 import Sdam.Core
-import Sdam.MetaVar
+
+--------------------------------------------------------------------------------
+-- MetaVar
+--------------------------------------------------------------------------------
+
+newtype MetaVar = MetaVar { metaVarName :: Name }
+  deriving newtype (Eq, Ord)
+
+metaVarStr :: MetaVar -> String
+metaVarStr MetaVar{metaVarName} = nameToStr metaVarName
+
+data Ty' =
+  TyRec' [(FieldName, TyU)] |
+  TySeq' TyU |
+  TyStr'
+
+data TyU = TyU (Set MetaVar) (Set TyName)
+
+tyU_metaVars :: TyU -> Set MetaVar
+tyU_metaVars (TyU mv _) = mv
+
+instance Semigroup TyU where
+  TyU mv1 tn1 <> TyU mv2 tn2 =
+    TyU (Set.union mv1 mv2) (Set.union tn1 tn2)
+
+instance Monoid TyU where
+  mempty = TyU Set.empty Set.empty
+
+tyU_MetaVar :: MetaVar -> TyU
+tyU_MetaVar mv = TyU (Set.singleton mv) Set.empty
+
+tyU_TyName :: TyName -> TyU
+tyU_TyName tn = TyU Set.empty (Set.singleton tn)
 
 --------------------------------------------------------------------------------
 -- Common
@@ -372,7 +409,7 @@ pValueStr = do
     pChar =
       (Just <$> L.charLiteral) <|>
       (Nothing <$ string "\\&") <|>
-      (Just <$> anyChar)
+      (Just <$> anySingle)
 
 pFieldDef :: Maybe TyName -> Parser SpaceParseErr (FieldId, Ref)
 pFieldDef mTyName = do

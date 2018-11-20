@@ -1,10 +1,11 @@
-# { stdenv, pkgs, haskell }:
-with import <nixpkgs> { };
+{ pkgs ? import <nixpkgs> {},
+  hc ? "ghc844"
+}:
 
-stdenv.mkDerivation rec {
+pkgs.stdenv.mkDerivation rec {
   name = "sdam";
   buildInputs = [
-    haskell.compiler.ghc843
+    pkgs.haskell.compiler.${hc}
     pkgs.cabal-install
   ];
 }

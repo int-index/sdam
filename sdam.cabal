@@ -10,6 +10,7 @@ library
     Sdam.Resolve
     Sdam.Fingerprint
     Sdam.Name
+    Sdam.NameInfo
   build-depends: base, containers, megaparsec, parser-combinators
   hs-source-dirs: src
   default-language: Haskell2010

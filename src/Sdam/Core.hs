@@ -150,7 +150,7 @@ We define 'TyId' and 'FieldId' as fingerprints rather than strings:
   serialized values to take more space or anything like that.
 
 * Unfortunately, this means we can't pretty-print a 'Value' without consulting
-  an 'Env' because hashing is not invertible.
+  an 'Env' because hashing is not invertible. See the Sdam.NameInfo module.
 
 -}
 

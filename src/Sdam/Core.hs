@@ -37,10 +37,16 @@ module Sdam.Core
 
     -- * Paths
     Path(..),
+    emptyPath,
+    consPath,
+    unconsPath,
     PathSegment(..),
     Index,
     intToIndex,
     indexToInt,
+    PathBuilder(..),
+    mkPathBuilder,
+    buildPath
   ) where
 
 import Data.Map (Map)
@@ -290,6 +296,18 @@ data Resolved =
 newtype Path = Path [PathSegment]
   deriving newtype (Eq, Show)
 
+emptyPath :: Path
+emptyPath = Path []
+
+consPath :: PathSegment -> Path -> Path
+consPath ps (Path p) = Path (ps:p)
+
+unconsPath :: Path -> Maybe (PathSegment, Path)
+unconsPath (Path p) =
+  case p of
+    [] -> Nothing
+    ps : p' -> Just (ps, Path p')
+
 data PathSegment =
   PathSegmentRec FieldId |
   PathSegmentSeq Index
@@ -307,3 +325,17 @@ intToIndex i =
 
 indexToInt :: Index -> Int
 indexToInt (Index i) = i
+
+newtype PathBuilder = PathBuilder (Path -> Path)
+
+instance Semigroup PathBuilder where
+  PathBuilder f <> PathBuilder g = PathBuilder (f . g)
+
+instance Monoid PathBuilder where
+  mempty = PathBuilder id
+
+mkPathBuilder :: PathSegment -> PathBuilder
+mkPathBuilder ps = PathBuilder (consPath ps)
+
+buildPath :: PathBuilder -> Path
+buildPath (PathBuilder pb) = pb emptyPath

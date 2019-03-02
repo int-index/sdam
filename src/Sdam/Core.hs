@@ -288,13 +288,16 @@ data Resolved =
 --------------------------------------------------------------------------------
 
 newtype Path = Path [PathSegment]
+  deriving newtype (Eq, Show)
 
 data PathSegment =
   PathSegmentRec FieldId |
   PathSegmentSeq Index
+  deriving stock (Eq, Show)
 
 -- Invariant: non-negative.
 newtype Index = Index Int
+  deriving newtype (Eq, Show)
 
 intToIndex :: Int -> Index
 intToIndex i =

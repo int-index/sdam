@@ -22,6 +22,7 @@ module Sdam.Core
     strToTyId,
     FieldId(..),
     mkFieldId,
+    mkFieldId',
     fieldIdToStr,
     strToFieldId,
     Ref(..),
@@ -204,9 +205,12 @@ Note that 'FieldId' is made from both 'TyName' and 'FieldName':
 -}
 
 mkFieldId :: TyName -> FieldName -> FieldId
-mkFieldId ty fieldName =
+mkFieldId tyName = mkFieldId' (mkTyId tyName)
+
+mkFieldId' :: TyId -> FieldName -> FieldId
+mkFieldId' tyId fieldName =
   let
-    TyId tyFp = mkTyId ty
+    TyId tyFp = tyId
     fldFp = fingerprintString (fieldNameStr fieldName)
   in
     FieldId (fingerprintFingerprints [tyFp, fldFp])

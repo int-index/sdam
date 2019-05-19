@@ -15,26 +15,9 @@ module Sdam.Core
     Ty(..),
     TyUnion(..),
 
-    -- * References
-    TyId(..),
-    mkTyId,
-    tyIdToStr,
-    strToTyId,
-    FieldId(..),
-    mkFieldId,
-    mkFieldId',
-    fieldIdToStr,
-    strToFieldId,
-    Ref(..),
-    refToStr,
-    strToRef,
-
     -- * Values
-    Space(..),
-    spaceRoots,
     Object(..),
     Value(..),
-    Resolved(..),
 
     -- * Paths
     Path(..),
@@ -50,30 +33,28 @@ module Sdam.Core
     buildPath
   ) where
 
-import Data.Map (Map)
+import Data.Hashable (Hashable)
+import Data.HashMap.Strict (HashMap)
 import Data.Set (Set)
 import Data.Sequence (Seq)
-import Data.Foldable (toList)
-import Data.String (IsString(fromString))
+import Data.String (IsString)
 import qualified Data.Set as Set
-import qualified Data.Map as Map
-import Control.Exception (Exception, ArithException(Underflow), throw)
+import Control.Exception (ArithException(Underflow), throw)
 
 import Sdam.Name
-import Sdam.Fingerprint
 
 --------------------------------------------------------------------------------
 -- Names
 --------------------------------------------------------------------------------
 
 newtype TyName = TyName { tyName :: Name }
-  deriving newtype (Eq, Ord, Show, IsString)
+  deriving newtype (Eq, Ord, Show, IsString, Hashable)
 
 tyNameStr :: TyName -> String
 tyNameStr TyName{tyName} = nameToStr tyName
 
 newtype FieldName = FieldName { fieldName :: Name }
-  deriving newtype (Eq, Ord, Show, IsString)
+  deriving newtype (Eq, Ord, Show, IsString, Hashable)
 
 fieldNameStr :: FieldName -> String
 fieldNameStr FieldName{fieldName} = nameToStr fieldName
@@ -124,11 +105,11 @@ language that is being described.
 
 -}
 
-newtype Env = Env { envMap :: Map TyName Ty }
+newtype Env = Env { envMap :: HashMap TyName Ty }
   deriving newtype Show
 
 data Ty =
-  TyRec (Map FieldName TyUnion) |
+  TyRec (HashMap FieldName TyUnion) |
   TySeq TyUnion |
   TyStr
   deriving stock Show
@@ -143,155 +124,33 @@ instance Monoid TyUnion where
   mempty = TyUnion Set.empty
 
 --------------------------------------------------------------------------------
--- References
+-- Objects/Values
 --------------------------------------------------------------------------------
 
 {-
 
-We define 'TyId' and 'FieldId' as fingerprints rather than strings:
+'Object' and 'Value' are parametrized by the type of their fields. In the trivial
+case, we can take the fixpoint of 'Object' to have objects that are made of objects:
 
-* We get fast comparisons this way. Comparing two Word64 is far better than
-  comparing entire lists of characters.
+  newtype AST = AST (Object AST)
 
-* Name length becomes irrelevant. We wouldn't want longer names to make
-  serialized values to take more space or anything like that.
+However, we may also use this for extension:
 
-* Unfortunately, this means we can't pretty-print a 'Value' without consulting
-  an 'Env' because hashing is not invertible. See the Sdam.NameInfo module.
-
--}
-
-newtype TyId = TyId { tyIdFingerprint :: Fingerprint }
-  deriving newtype (Eq, Ord)
-
-mkTyId :: TyName -> TyId
-mkTyId tyName = TyId (fingerprintString (tyNameStr tyName))
-
-data InvalidTyIdStr = InvalidTyIdStr String
-  deriving stock Show
-
-instance Exception InvalidTyIdStr
-
-instance IsString TyId where
-  fromString s =
-    case strToTyId s of
-      Nothing -> throw (InvalidTyIdStr s)
-      Just tyId -> tyId
-
-instance Show TyId where
-  showsPrec d tyId = showsPrec d (tyIdToStr tyId)
-
-tyIdToStr :: TyId -> String
-tyIdToStr = fingerprintToString . tyIdFingerprint
-
-strToTyId :: String -> Maybe TyId
-strToTyId = fmap TyId . stringToFingerprint
-
-newtype FieldId = FieldId { fieldIdFingerprint :: Fingerprint }
-  deriving newtype (Eq, Ord)
-
-{-
-
-Note that 'FieldId' is made from both 'TyName' and 'FieldName':
-
-* This guarantees that there is no clash between fields with the same name
-  across different types (that is, each type has its own namespace for fields),
-  for example in paths.
-
-* This safeguards against duck typing. We wouldn't want code that abstracts over
-  values by what fields /names/ they have: abstraction should be over meaning,
-  not over strings.
+  data Editable =
+      Node UUID (Object Editable)
+    | Hole
 
 -}
-
-mkFieldId :: TyName -> FieldName -> FieldId
-mkFieldId tyName = mkFieldId' (mkTyId tyName)
-
-mkFieldId' :: TyId -> FieldName -> FieldId
-mkFieldId' tyId fieldName =
-  let
-    TyId tyFp = tyId
-    fldFp = fingerprintString (fieldNameStr fieldName)
-  in
-    FieldId (fingerprintFingerprints [tyFp, fldFp])
-
-data InvalidFieldIdStr = InvalidFieldIdStr String
+data Object a = Object TyName (Value a)
   deriving stock Show
-
-instance Exception InvalidFieldIdStr
-
-instance IsString FieldId where
-  fromString s =
-    case strToFieldId s of
-      Nothing -> throw (InvalidFieldIdStr s)
-      Just fieldId -> fieldId
-
-instance Show FieldId where
-  showsPrec d fieldId = showsPrec d (fieldIdToStr fieldId)
-
-fieldIdToStr :: FieldId -> String
-fieldIdToStr = fingerprintToString . fieldIdFingerprint
-
-strToFieldId :: String -> Maybe FieldId
-strToFieldId = fmap FieldId . stringToFingerprint
-
--- References can be generated by incrementing a counter, generating UUIDs,
--- hashing strings, etc. The only requirement is that new references are
--- distinct from the previous ones within a single 'Space'.
-newtype Ref = Ref { refFingerprint :: Fingerprint }
-  deriving newtype (Eq, Ord)
-
-data InvalidRefStr = InvalidRefStr String
-  deriving stock Show
-
-instance Exception InvalidRefStr
-
-instance IsString Ref where
-  fromString s =
-    case strToRef s of
-      Nothing -> throw (InvalidRefStr s)
-      Just ref -> ref
-
-instance Show Ref where
-  showsPrec d ref = showsPrec d (refToStr ref)
-
-refToStr :: Ref -> String
-refToStr = fingerprintToString . refFingerprint
-
-strToRef :: String -> Maybe Ref
-strToRef = fmap Ref . stringToFingerprint
-
---------------------------------------------------------------------------------
--- Values
---------------------------------------------------------------------------------
-
-newtype Space =
-  Space { spaceMap :: Map Ref (Object Ref) }
-  deriving newtype Show
-
-spaceRoots :: Space -> Set Ref
-spaceRoots Space{spaceMap} =
-  Map.keysSet spaceMap Set.\\
-  foldMap @(Map _) (Set.fromList . toList @Object) spaceMap
-
-data Object a = Object TyId (Value a)
   deriving stock (Functor, Foldable, Traversable)
 
-deriving stock instance Show a => Show (Object a)
-
 data Value a =
-  ValueRec (Map FieldId a) |
+  ValueRec (HashMap FieldName a) |
   ValueSeq (Seq a) |
   ValueStr String
   deriving stock Show
   deriving stock (Functor, Foldable, Traversable)
-
-data Resolved =
-  Resolved
-    { resRef :: Ref,
-      resPath :: Path,
-      resObject :: Object Resolved,
-      resLoop :: Bool }
 
 --------------------------------------------------------------------------------
 -- Paths
@@ -312,9 +171,21 @@ unconsPath (Path p) =
     [] -> Nothing
     ps : p' -> Just (ps, Path p')
 
+{-
+
+Note that 'PathSegment' is qualified by a 'TyName':
+
+* This guarantees that there is no clash between fields with the same name
+  across different types (that is, each type has its own namespace for fields).
+
+* This safeguards against duck typing. We wouldn't want code that abstracts over
+  values by what fields /names/ they have: abstraction should be over meaning,
+  not over strings.
+
+-}
 data PathSegment =
-  PathSegmentRec FieldId |
-  PathSegmentSeq Index
+  PathSegmentRec TyName FieldName |
+  PathSegmentSeq TyName Index
   deriving stock (Eq, Show)
 
 -- Invariant: non-negative.

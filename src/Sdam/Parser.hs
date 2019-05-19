@@ -11,26 +11,32 @@ module Sdam.Parser
     pEnv,
     EnvParseErr(..),
 
-    -- Space
-    pSpace,
-    SpaceParseErr(..),
+    -- Object/Value
+    pObject,
+    ParsedObject(..),
+
+    -- Path
+    pPath,
 
     -- Running
     parse
   ) where
 
+import Data.Hashable (Hashable)
 import Control.Monad
 import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Graph
-import Data.Map (Map)
+import Data.HashMap.Strict (HashMap)
 import Data.Sequence (Seq)
 import Data.Set (Set)
 import Data.Semigroup
 import Data.Maybe
+import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import GHC.Exts (IsList(fromList))
+import Data.Void
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
@@ -38,7 +44,6 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import qualified Control.Monad.Combinators.NonEmpty as NonEmpty
 
 import Sdam.Name
-import Sdam.Fingerprint
 import Sdam.Core
 
 --------------------------------------------------------------------------------
@@ -46,7 +51,7 @@ import Sdam.Core
 --------------------------------------------------------------------------------
 
 newtype MetaVar = MetaVar { metaVarName :: Name }
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Hashable)
 
 metaVarStr :: MetaVar -> String
 metaVarStr MetaVar{metaVarName} = nameToStr metaVarName
@@ -109,6 +114,12 @@ pLetter = unsafeCharToLetter <$> letterChar
 
 pName :: Ord e => Parser e Name
 pName = Name <$> (NonEmpty.some pLetter `NonEmpty.sepBy1` char '-')
+
+pTyName :: Ord e => Parser e TyName
+pTyName = pLexeme (TyName <$> pName)
+
+pFieldName :: Ord e => Parser e FieldName
+pFieldName = pLexeme (FieldName <$> pName)
 
 --------------------------------------------------------------------------------
 -- Env
@@ -178,7 +189,7 @@ pEnv = do
 
 substMetaDecls ::
   [(MetaVar, TyU)] ->
-  Parser EnvParseErr (Map MetaVar TyUnion)
+  Parser EnvParseErr (HashMap MetaVar TyUnion)
 substMetaDecls metaVars' = do
   let dups = getDups (map fst metaVars')
   unless (null dups) $ customFailure (EnvConflictingMetaDecls dups)
@@ -194,32 +205,32 @@ substMetaDecls metaVars' = do
       -- any metavariable used in 'tyU' must be present in 'acc'
       -- because the input list is toposorted
       tyUnion <- substTyU acc tyU
-      go (Map.insert metaVar tyUnion acc) xs
-  go Map.empty metaVarsNoLoops
+      go (HashMap.insert metaVar tyUnion acc) xs
+  go HashMap.empty metaVarsNoLoops
 
-lookupMetaVar :: Map MetaVar TyUnion -> MetaVar -> Parser EnvParseErr TyUnion
+lookupMetaVar :: HashMap MetaVar TyUnion -> MetaVar -> Parser EnvParseErr TyUnion
 lookupMetaVar metaDecls mv =
-  case Map.lookup mv metaDecls of
+  case HashMap.lookup mv metaDecls of
     Nothing -> customFailure (EnvMetaVarNotDefined mv)
     Just a -> return a
 
-substTyU :: Map MetaVar TyUnion -> TyU -> Parser EnvParseErr TyUnion
+substTyU :: HashMap MetaVar TyUnion -> TyU -> Parser EnvParseErr TyUnion
 substTyU metaDecls (TyU mvs tns) = do
   tyUnions' <- traverse (lookupMetaVar metaDecls) (Set.toList mvs)
   return $ sconcat (TyUnion tns :| tyUnions')
 
 substTyDecls ::
-  Map MetaVar TyUnion ->
+  HashMap MetaVar TyUnion ->
   [(TyName, Ty')] ->
-  Parser EnvParseErr (Map TyName Ty)
+  Parser EnvParseErr (HashMap TyName Ty)
 substTyDecls metaDecls tyDecls' = do
   let dups = getDups (map fst tyDecls')
   unless (null dups) $ customFailure (EnvConflictingTypeDecls dups)
   tyDecls <- traverse (substTyDecl metaDecls) tyDecls'
-  return (Map.fromList tyDecls)
+  return (HashMap.fromList tyDecls)
 
 substTyDecl ::
-  Map MetaVar TyUnion ->
+  HashMap MetaVar TyUnion ->
   (TyName, Ty') ->
   Parser EnvParseErr (TyName, Ty)
 substTyDecl metaDecls (tyName, ty') =
@@ -234,18 +245,12 @@ substTyDecl metaDecls (tyName, ty') =
         forM fields' $ \(fieldName, tyU) -> do
           tyUnion <- substTyU metaDecls tyU
           return (fieldName, tyUnion)
-      return (tyName, TyRec (Map.fromList fields))
+      return (tyName, TyRec (HashMap.fromList fields))
     TyStr' ->
       return (tyName, TyStr)
 
 pDecl :: Parser EnvParseErr Decl
 pDecl = TyDecl <$> pTyDecl <|> MetaDecl <$> pMetaDecl
-
-pTyName :: Parser EnvParseErr TyName
-pTyName = pLexeme (TyName <$> pName)
-
-pFieldName :: Parser EnvParseErr FieldName
-pFieldName = pLexeme (FieldName <$> pName)
 
 pMetaDecl :: Parser EnvParseErr (MetaVar, TyU)
 pMetaDecl = do
@@ -297,126 +302,71 @@ pMetaVar :: Parser EnvParseErr MetaVar
 pMetaVar = pLexeme $ MetaVar <$> between (char '<') (char '>') pName
 
 --------------------------------------------------------------------------------
--- Space
+-- Object
 --------------------------------------------------------------------------------
 
-data SpaceParseErr =
-  SpaceInvalidRef String |
-  SpaceInvalidTyId String |
-  SpaceInvalidFieldId String |
-  SpaceConflictingFieldDefs Ref [FieldId] |
-  SpaceConflictingObjectDefs [Ref]
-  deriving stock (Eq, Ord)
+type ObjectParseErr = Void
 
-instance ShowErrorComponent SpaceParseErr where
-    showErrorComponent = \case
-      SpaceInvalidRef str ->
-        "invalid ref: " ++ show str
-      SpaceInvalidTyId str ->
-        "invalid type id: " ++ show str
-      SpaceInvalidFieldId str ->
-        "invalid field id: " ++ show str
-      SpaceConflictingFieldDefs ref fieldIds ->
-        "conflicting field ids in " ++ refToStr ref ++ ": " ++
-        concat (intersperse ", " (map fieldIdToStr fieldIds))
-      SpaceConflictingObjectDefs refs ->
-        "conflicting object refs: " ++
-        concat (intersperse ", " (map refToStr refs))
+newtype ParsedObject = ParsedObject (Object ParsedObject)
+  deriving newtype Show
 
-pSpace :: Parser SpaceParseErr Space
-pSpace = do
-  defs <- many pDef
-  let dups = getDups (map fst defs)
-  unless (null dups) $ customFailure (SpaceConflictingObjectDefs dups)
-  return Space{ spaceMap = Map.fromList defs }
-
-pDef :: Parser SpaceParseErr (Ref, Object Ref)
-pDef = do
-  ref <- pRef
-  pColon
-  obj <- pObject
-  pSemicolon
-  return (ref, obj)
-
-pObject :: Parser SpaceParseErr (Object Ref)
+pObject :: Parser ObjectParseErr ParsedObject
 pObject = do
-  (tyId, mTyName) <- pTyId
-  v <- pValue mTyName
-  return (Object tyId v)
+  tyName <- pTyName
+  v <- pValue
+  return (ParsedObject (Object tyName v))
 
-pRef :: Parser SpaceParseErr Ref
-pRef = pLexeme $ do
-  void (char '#')
-  str <- takeWhile1P Nothing isFingerprintChar
-  case strToRef str of
-    Nothing -> customFailure (SpaceInvalidRef str)
-    Just ref -> return ref
-
-pTyId :: Parser SpaceParseErr (TyId, Maybe TyName)
-pTyId = pLexeme $ byName <|> byId
-  where
-    byName = do
-      tyName <- TyName <$> pName
-      return (mkTyId tyName, Just tyName)
-    byId = do
-      void (char '#')
-      str <- takeWhile1P Nothing isFingerprintChar;
-      case strToTyId str of
-        Nothing -> customFailure (SpaceInvalidTyId str)
-        Just tyId -> return (tyId, Nothing)
-
-pFieldId :: Maybe TyName -> Parser SpaceParseErr FieldId
-pFieldId mTyName = pLexeme $ try byFullName <|> byName <|> byId
-  where
-    byFullName = do
-      tyName <- TyName <$> pName
-      void (char '.')
-      fieldName <- FieldName <$> pName
-      return (mkFieldId tyName fieldName)
-    byName =
-      case mTyName of
-        Nothing -> empty
-        Just tyName -> do
-          fieldName <- FieldName <$> pName
-          return (mkFieldId tyName fieldName)
-    byId = do
-      void (char '#')
-      str <- takeWhile1P Nothing isFingerprintChar;
-      case strToFieldId str of
-        Nothing -> customFailure (SpaceInvalidFieldId str)
-        Just fieldId -> return fieldId
-
-pValue :: Maybe TyName -> Parser SpaceParseErr (Value Ref)
-pValue mTyName =
+pValue :: Parser ObjectParseErr (Value ParsedObject)
+pValue =
   ValueStr <$> pValueStr <|>
   ValueSeq <$> pValueSeq <|>
-  ValueRec <$> pValueRec mTyName
+  ValueRec <$> pValueRec
 
-pValueSeq :: Parser SpaceParseErr (Seq Ref)
+pValueSeq :: Parser ObjectParseErr (Seq ParsedObject)
 pValueSeq =
   between (pSymbol "[") (pSymbol "]") $
-  fromList <$> (pRef `sepBy` pComma)
+  fromList <$> (pObject `sepBy` pComma)
 
-pValueRec :: Maybe TyName -> Parser SpaceParseErr (Map FieldId Ref)
-pValueRec mTyName = Map.fromList <$> (pFieldDef mTyName `sepBy` pComma)
+pValueRec :: Parser ObjectParseErr (HashMap FieldName ParsedObject)
+pValueRec =
+  between (pSymbol "{") (pSymbol "}") $
+  HashMap.fromList <$> (pFieldDef `sepBy` pComma)
 
-pValueStr :: Parser SpaceParseErr String
-pValueStr = do
+pValueStr :: Parser ObjectParseErr String
+pValueStr = pLexeme $ do
   void (char '\"')
   catMaybes <$> manyTill pChar (char '\"')
   where
-    pChar :: Parser SpaceParseErr (Maybe Char)
+    pChar :: Parser ObjectParseErr (Maybe Char)
     pChar =
       (Just <$> L.charLiteral) <|>
       (Nothing <$ string "\\&") <|>
       (Just <$> anySingle)
 
-pFieldDef :: Maybe TyName -> Parser SpaceParseErr (FieldId, Ref)
-pFieldDef mTyName = do
-  fieldId <- pFieldId mTyName
+pFieldDef :: Parser ObjectParseErr (FieldName, ParsedObject)
+pFieldDef = do
+  fieldName <- pFieldName
   pSymbol "="
-  ref <- pRef
-  return (fieldId, ref)
+  object <- pObject
+  return (fieldName, object)
+
+--------------------------------------------------------------------------------
+-- Object
+--------------------------------------------------------------------------------
+
+type PathParseErr = Void
+
+pPath :: Parser PathParseErr Path
+pPath = Path <$> (pPathSegment `sepBy` char '/')
+
+pPathSegment :: Parser PathParseErr PathSegment
+pPathSegment = do
+  tyName <- TyName <$> pName
+  void (char '.')
+  let
+    pRec = PathSegmentRec tyName <$> (FieldName <$> pName)
+    pSeq = PathSegmentSeq tyName <$> (intToIndex <$> L.decimal)
+  pRec <|> pSeq
 
 --------------------------------------------------------------------------------
 -- Utils

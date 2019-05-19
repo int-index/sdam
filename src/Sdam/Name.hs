@@ -11,6 +11,7 @@ module Sdam.Name
     strToName
   ) where
 
+import Data.Hashable (Hashable)
 import Data.String (IsString(fromString))
 import Data.Foldable (toList)
 import Data.Char (isLetter)
@@ -21,7 +22,7 @@ import Control.Exception (Exception, throw)
 
 -- Invariant: (Char.isLetter c)
 newtype Letter = Letter Char
-  deriving newtype (Eq, Ord, Show)
+  deriving newtype (Eq, Ord, Show, Hashable)
 
 -- Precondition (unchecked): the input character satisfies 'Char.isLetter'.
 unsafeCharToLetter :: Char -> Letter
@@ -36,7 +37,7 @@ letterToChar :: Letter -> Char
 letterToChar (Letter c) = c
 
 newtype Name = Name { nameParts :: NonEmpty (NonEmpty Letter) }
-  deriving newtype (Eq, Ord)
+  deriving newtype (Eq, Ord, Hashable)
 
 nameToStr :: Name -> String
 nameToStr = merge . inter . coerce @Name @(NonEmpty (NonEmpty Char))

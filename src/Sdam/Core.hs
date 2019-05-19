@@ -37,6 +37,7 @@ import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
 import Data.HashSet (HashSet)
 import Data.Sequence (Seq)
+import Data.Text (Text)
 import Data.String (IsString)
 import qualified Data.HashSet as HashSet
 import Control.Exception (ArithException(Underflow), throw)
@@ -148,7 +149,7 @@ data Object a = Object TyName (Value a)
 data Value a =
   ValueRec (HashMap FieldName a) |
   ValueSeq (Seq a) |
-  ValueStr String
+  ValueStr Text
   deriving stock Show
   deriving stock (Functor, Foldable, Traversable)
 

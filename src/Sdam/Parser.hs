@@ -30,10 +30,12 @@ import Data.Graph
 import Data.HashMap.Strict (HashMap)
 import Data.HashSet (HashSet)
 import Data.Sequence (Seq)
+import Data.Text (Text)
 import Data.Semigroup
 import Data.Maybe
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashSet as HashSet
+import qualified Data.Text as Text
 import GHC.Exts (IsList(fromList))
 import Data.Void
 
@@ -331,10 +333,10 @@ pValueRec =
   between (pSymbol "{") (pSymbol "}") $
   HashMap.fromList <$> (pFieldDef `sepBy` pComma)
 
-pValueStr :: Parser ObjectParseErr String
+pValueStr :: Parser ObjectParseErr Text
 pValueStr = pLexeme $ do
   void (char '\"')
-  catMaybes <$> manyTill pChar (char '\"')
+  Text.pack . catMaybes <$> manyTill pChar (char '\"')
   where
     pChar :: Parser ObjectParseErr (Maybe Char)
     pChar =

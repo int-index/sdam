@@ -35,10 +35,10 @@ module Sdam.Core
 
 import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
-import Data.Set (Set)
+import Data.HashSet (HashSet)
 import Data.Sequence (Seq)
 import Data.String (IsString)
-import qualified Data.Set as Set
+import qualified Data.HashSet as HashSet
 import Control.Exception (ArithException(Underflow), throw)
 
 import Sdam.Name
@@ -114,14 +114,14 @@ data Ty =
   TyStr
   deriving stock Show
 
-data TyUnion = TyUnion (Set TyName)
+data TyUnion = TyUnion (HashSet TyName)
   deriving stock Show
 
 instance Semigroup TyUnion where
-  TyUnion tns1 <> TyUnion tns2 = TyUnion (Set.union tns1 tns2)
+  TyUnion tns1 <> TyUnion tns2 = TyUnion (HashSet.union tns1 tns2)
 
 instance Monoid TyUnion where
-  mempty = TyUnion Set.empty
+  mempty = TyUnion HashSet.empty
 
 --------------------------------------------------------------------------------
 -- Objects/Values

@@ -28,13 +28,12 @@ import Data.List
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Graph
 import Data.HashMap.Strict (HashMap)
+import Data.HashSet (HashSet)
 import Data.Sequence (Seq)
-import Data.Set (Set)
 import Data.Semigroup
 import Data.Maybe
 import qualified Data.HashMap.Strict as HashMap
-import qualified Data.Map as Map
-import qualified Data.Set as Set
+import qualified Data.HashSet as HashSet
 import GHC.Exts (IsList(fromList))
 import Data.Void
 
@@ -61,23 +60,23 @@ data Ty' =
   TySeq' TyU |
   TyStr'
 
-data TyU = TyU (Set MetaVar) (Set TyName)
+data TyU = TyU (HashSet MetaVar) (HashSet TyName)
 
-tyU_metaVars :: TyU -> Set MetaVar
+tyU_metaVars :: TyU -> HashSet MetaVar
 tyU_metaVars (TyU mv _) = mv
 
 instance Semigroup TyU where
   TyU mv1 tn1 <> TyU mv2 tn2 =
-    TyU (Set.union mv1 mv2) (Set.union tn1 tn2)
+    TyU (HashSet.union mv1 mv2) (HashSet.union tn1 tn2)
 
 instance Monoid TyU where
-  mempty = TyU Set.empty Set.empty
+  mempty = TyU HashSet.empty HashSet.empty
 
 tyU_MetaVar :: MetaVar -> TyU
-tyU_MetaVar mv = TyU (Set.singleton mv) Set.empty
+tyU_MetaVar mv = TyU (HashSet.singleton mv) HashSet.empty
 
 tyU_TyName :: TyName -> TyU
-tyU_TyName tn = TyU Set.empty (Set.singleton tn)
+tyU_TyName tn = TyU HashSet.empty (HashSet.singleton tn)
 
 --------------------------------------------------------------------------------
 -- Common
@@ -194,7 +193,7 @@ substMetaDecls metaVars' = do
   let dups = getDups (map fst metaVars')
   unless (null dups) $ customFailure (EnvConflictingMetaDecls dups)
   let
-    mkMetaNode (metaVar, tyU) = (tyU, metaVar, Set.toList (tyU_metaVars tyU))
+    mkMetaNode (metaVar, tyU) = (tyU, metaVar, HashSet.toList (tyU_metaVars tyU))
     metaVarGroups = stronglyConnCompR (map mkMetaNode metaVars')
   metaVarsNoLoops <- forM metaVarGroups $ \case
     AcyclicSCC (tyU, metaVar, _) -> return (metaVar, tyU)
@@ -216,7 +215,7 @@ lookupMetaVar metaDecls mv =
 
 substTyU :: HashMap MetaVar TyUnion -> TyU -> Parser EnvParseErr TyUnion
 substTyU metaDecls (TyU mvs tns) = do
-  tyUnions' <- traverse (lookupMetaVar metaDecls) (Set.toList mvs)
+  tyUnions' <- traverse (lookupMetaVar metaDecls) (HashSet.toList mvs)
   return $ sconcat (TyUnion tns :| tyUnions')
 
 substTyDecls ::
@@ -372,11 +371,11 @@ pPathSegment = do
 -- Utils
 --------------------------------------------------------------------------------
 
-getDups :: Ord a => [a] -> [a]
+getDups :: (Hashable a, Eq a) => [a] -> [a]
 getDups =
-  Map.keys .
-  Map.filter id .
-  Map.fromListWith (\_ _ -> True) .
+  HashMap.keys .
+  HashMap.filter id .
+  HashMap.fromListWith (\_ _ -> True) .
   map (\x -> (x,False))
 
 snd3 :: (a, b, c) -> b

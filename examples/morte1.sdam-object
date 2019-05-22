@@ -1,0 +1,20 @@
+Lam {
+  var = Var "x",
+  ty =
+    Pi {
+      var = Var "t",
+      ty = Box {},
+      body = Tup []
+    },
+  body =
+    Tup [
+      App {
+        fn = Var "f",
+        arg = IVar {
+          var = Var "x",
+          index = Nat "0"
+        }
+      },
+      Star {}
+    ]
+}

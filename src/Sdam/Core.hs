@@ -141,6 +141,17 @@ However, we may also use this for extension:
       Node UUID (Object Editable)
     | Hole
 
+For a given 'Schema', there is a functional dependency between the 'TyName'
+in the 'Object' and the shape of the 'Value':
+
+  lookup(tyName, schema) is TyStr   ==>   value is ValueStr
+  lookup(tyName, schema) is TySeq   ==>   value is ValueSeq
+  lookup(tyName, schema) is TyRec   ==>   value is ValueRec
+
+A type-indexed representation could be used to guarantee this at compile-time,
+but this would involve promoting the schema to the type-level and using
+singleton types.
+
 -}
 data Object a = Object TyName (Value a)
   deriving stock Show

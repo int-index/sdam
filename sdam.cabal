@@ -8,6 +8,7 @@ library
     Sdam.Core
     Sdam.Parser
     Sdam.Printer
+    Sdam.Validator
     Sdam.Name
   build-depends:
     base, containers, unordered-containers, hashable, text, megaparsec,

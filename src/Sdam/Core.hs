@@ -39,7 +39,6 @@ import Data.HashSet (HashSet)
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.String (IsString)
-import qualified Data.HashSet as HashSet
 import Control.Exception (ArithException(Underflow), throw)
 
 import Sdam.Name
@@ -115,14 +114,8 @@ data Ty =
   TyStr
   deriving stock Show
 
-data TyUnion = TyUnion (HashSet TyName)
-  deriving stock Show
-
-instance Semigroup TyUnion where
-  TyUnion tns1 <> TyUnion tns2 = TyUnion (HashSet.union tns1 tns2)
-
-instance Monoid TyUnion where
-  mempty = TyUnion HashSet.empty
+newtype TyUnion = TyUnion (HashSet TyName)
+  deriving newtype (Show, Semigroup, Monoid)
 
 --------------------------------------------------------------------------------
 -- Objects/Values

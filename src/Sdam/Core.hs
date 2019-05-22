@@ -11,7 +11,7 @@ module Sdam.Core
     fieldNameStr,
 
     -- * Types
-    Env(..),
+    Schema(..),
     Ty(..),
     TyUnion(..),
 
@@ -66,7 +66,7 @@ fieldNameStr FieldName{fieldName} = nameToStr fieldName
 
 {-
 
-An 'Env' defines the available syntactic constructs: records, sequences, and
+A 'Schema defines the available syntactic constructs: records, sequences, and
 strings. In each subtree position (record fields and sequence elements) there
 is a union of types that are allowed in this position. For instance:
 
@@ -106,7 +106,7 @@ language that is being described.
 
 -}
 
-newtype Env = Env { envMap :: HashMap TyName Ty }
+newtype Schema = Schema { schemaTypes :: HashMap TyName Ty }
   deriving newtype Show
 
 data Ty =

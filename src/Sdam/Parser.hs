@@ -363,10 +363,13 @@ pPath = Path <$> (pPathSegment `sepBy` char '/')
 pPathSegment :: Parser PathParseErr PathSegment
 pPathSegment = do
   tyName <- TyName <$> pName
-  void (char '.')
   let
-    pRec = PathSegmentRec tyName <$> (FieldName <$> pName)
-    pSeq = PathSegmentSeq tyName <$> (intToIndex <$> L.decimal)
+    pRec =
+      PathSegmentRec tyName <$>
+      (char '.' *> (FieldName <$> pName))
+    pSeq =
+      PathSegmentSeq tyName <$>
+      between (char '[') (char ']') (intToIndex <$> L.decimal)
   pRec <|> pSeq
 
 --------------------------------------------------------------------------------

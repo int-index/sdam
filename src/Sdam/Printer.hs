@@ -3,9 +3,6 @@
 
 module Sdam.Printer
   (
-    -- Schema
-    rSchema,
-
     -- Object/Value
     rObject,
     RenderObject(..),
@@ -21,21 +18,10 @@ import Prelude hiding ((<>))
 
 import Data.Foldable (toList)
 import qualified Data.HashMap.Strict as HashMap
-import qualified Data.HashSet as HashSet
 import Text.PrettyPrint
 
 import Sdam.Name
 import Sdam.Core
-
-rSchema :: Schema -> Doc
-rSchema Schema{schemaTypes} =
-  vcat (map rTyDecl (HashMap.toList schemaTypes))
-
-rTyDecl :: (TyName, Ty) -> Doc
-rTyDecl (tyName, TyRec fields) | null fields =
-  rTyName tyName <> semi
-rTyDecl (tyName, ty) =
-  hang (rTyName tyName <+> equals) 2 (rTy ty) <> semi
 
 rTyName :: TyName -> Doc
 rFieldName :: FieldName -> Doc
@@ -43,34 +29,6 @@ rName :: Name -> Doc
 rTyName TyName{tyName} = rName tyName
 rFieldName FieldName{fieldName} = rName fieldName
 rName = text . nameToStr
-
-rTy :: Ty -> Doc
-rTy TyStr = text "!str"
-rTy (TySeq u) =
-  let (uAtom, uDoc) = rTyUnion u
-      p = if uAtom then id else parens
-  in p uDoc <> char '*'
-rTy (TyRec fields) =
-  vcat $
-  punctuate comma $
-  map rTyRecField $
-  HashMap.toList fields
-
-rTyRecField :: (FieldName, TyUnion) -> Doc
-rTyRecField (fieldName, u) =
-  let (_, uDoc) = rTyUnion u
-  in rFieldName fieldName <> colon <+> uDoc
-
-rTyUnion :: TyUnion -> (Bool, Doc)
-rTyUnion (TyUnion u) =
-  case HashSet.toList u of
-    [x] -> (True, rTyName x)
-    xs ->
-      let uDoc =
-            hsep $
-            punctuate (text " |") $
-            map rTyName xs
-      in (False, uDoc)
 
 newtype RenderObject = RenderObject (Object RenderObject)
   deriving newtype Show

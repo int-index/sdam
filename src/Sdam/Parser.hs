@@ -3,14 +3,6 @@
 
 module Sdam.Parser
   (
-    -- MetaVar
-    MetaVar(..),
-    metaVarStr,
-
-    -- Schema
-    pSchema,
-    SchemaParseErr(..),
-
     -- Object/Value
     pObject,
     ParsedObject(..),
@@ -22,19 +14,12 @@ module Sdam.Parser
     parse
   ) where
 
-import Data.Hashable (Hashable)
 import Control.Monad
-import Data.List
-import Data.List.NonEmpty (NonEmpty(..))
-import Data.Graph
 import Data.HashMap.Strict (HashMap)
-import Data.HashSet (HashSet)
 import Data.Sequence (Seq)
 import Data.Text (Text)
-import Data.Semigroup
 import Data.Maybe
 import qualified Data.HashMap.Strict as HashMap
-import qualified Data.HashSet as HashSet
 import qualified Data.Text as Text
 import GHC.Exts (IsList(fromList))
 import Data.Void
@@ -46,43 +31,6 @@ import qualified Control.Monad.Combinators.NonEmpty as NonEmpty
 
 import Sdam.Name
 import Sdam.Core
-
---------------------------------------------------------------------------------
--- MetaVar
---------------------------------------------------------------------------------
-
-newtype MetaVar = MetaVar { metaVarName :: Name }
-  deriving newtype (Eq, Ord, Hashable)
-
-metaVarStr :: MetaVar -> String
-metaVarStr MetaVar{metaVarName} = nameToStr metaVarName
-
-data Ty' =
-  TyRec' [(FieldName, TyU)] |
-  TySeq' TyU |
-  TyStr'
-
-data TyU = TyU (HashSet MetaVar) (HashSet TyName)
-
-tyU_metaVars :: TyU -> HashSet MetaVar
-tyU_metaVars (TyU mv _) = mv
-
-instance Semigroup TyU where
-  TyU mv1 tn1 <> TyU mv2 tn2 =
-    TyU (HashSet.union mv1 mv2) (HashSet.union tn1 tn2)
-
-instance Monoid TyU where
-  mempty = TyU HashSet.empty HashSet.empty
-
-tyU_MetaVar :: MetaVar -> TyU
-tyU_MetaVar mv = TyU (HashSet.singleton mv) HashSet.empty
-
-tyU_TyName :: TyName -> TyU
-tyU_TyName tn = TyU HashSet.empty (HashSet.singleton tn)
-
---------------------------------------------------------------------------------
--- Common
---------------------------------------------------------------------------------
 
 type Parser e = Parsec e String
 
@@ -98,17 +46,8 @@ pLexeme = L.lexeme pWhitespace
 pSymbol :: Ord e => String -> Parser e ()
 pSymbol s = void (L.symbol pWhitespace s)
 
-pColon :: Ord e => Parser e ()
-pColon = pSymbol ":"
-
-pSemicolon :: Ord e => Parser e ()
-pSemicolon = pSymbol ";"
-
 pComma :: Ord e => Parser e ()
 pComma = pSymbol ","
-
-pBar :: Ord e => Parser e ()
-pBar = pSymbol "|"
 
 pLetter :: Ord e => Parser e Letter
 pLetter = unsafeCharToLetter <$> letterChar
@@ -121,186 +60,6 @@ pTyName = pLexeme (TyName <$> pName)
 
 pFieldName :: Ord e => Parser e FieldName
 pFieldName = pLexeme (FieldName <$> pName)
-
---------------------------------------------------------------------------------
--- Schema
---------------------------------------------------------------------------------
-
-data SchemaParseErr =
-  SchemaConflictingTypeDecls [TyName] |
-  SchemaConflictingFieldDecls TyName [FieldName] |
-  SchemaConflictingMetaDecls [MetaVar] |
-  SchemaCyclicMetaDecls [MetaVar] |
-  SchemaMetaVarNotDefined MetaVar
-  deriving stock (Eq, Ord)
-
-instance ShowErrorComponent SchemaParseErr where
-  showErrorComponent = \case
-    SchemaConflictingTypeDecls tyNames ->
-      "conflicting type declarations: " ++
-      concat (intersperse ", " (map tyNameStr tyNames))
-    SchemaConflictingFieldDecls tyName fieldNames ->
-      "conflicting field names in " ++ tyNameStr tyName ++ ": " ++
-      concat (intersperse ", " (map fieldNameStr fieldNames))
-    SchemaConflictingMetaDecls metaVars ->
-      "conflicting metavariable declarationss: " ++
-      concat (intersperse ", " (map metaVarStr metaVars))
-    SchemaCyclicMetaDecls metaVars ->
-      "cyclic metavariable definitions: " ++
-      concat (intersperse ", " (map metaVarStr metaVars))
-    SchemaMetaVarNotDefined metaVar ->
-      "undefined metavariable: " ++ metaVarStr metaVar
-
-data Decl = TyDecl (TyName, Ty') | MetaDecl (MetaVar, TyU)
-
-partitionDecls :: [Decl] -> ([(TyName, Ty')], [(MetaVar, TyU)])
-partitionDecls = go [] []
-  where
-    go tyDecls metaDecls [] = (tyDecls, metaDecls)
-    go tyDecls metaDecls (x:xs) =
-      case x of
-        TyDecl a -> go (a:tyDecls) metaDecls xs
-        MetaDecl a -> go tyDecls (a:metaDecls) xs
-
-pSchema :: Parser SchemaParseErr Schema
-pSchema = do
-  -- The parser operates in three stages:
-  --   * parse declarations
-  --   * process metavariables
-  --   * process type declarations
-  --
-  -- In the input, metavariables are sets of type names and other metavariables,
-  -- like this:
-  --
-  -- <m> = A | B | <n>
-  -- <n> = C | D
-  --
-  -- We toposort them and perform normalization, so we end up with metavariables
-  -- that stand for sets of type names (and no other metavariables).
-  --
-  -- <m> = A | B | C | D
-  -- <n> = C | D
-  --
-  -- And then we substitute metavariable definitions in type declarations.
-  decls <- many pDecl
-  let (tyDecls', metaDecls') = partitionDecls decls
-  metaDecls <- substMetaDecls metaDecls'
-  tyDecls <- substTyDecls metaDecls tyDecls'
-  return Schema{ schemaTypes = tyDecls }
-
-substMetaDecls ::
-  [(MetaVar, TyU)] ->
-  Parser SchemaParseErr (HashMap MetaVar TyUnion)
-substMetaDecls metaVars' = do
-  let dups = getDups (map fst metaVars')
-  unless (null dups) $ customFailure (SchemaConflictingMetaDecls dups)
-  let
-    mkMetaNode (metaVar, tyU) = (tyU, metaVar, HashSet.toList (tyU_metaVars tyU))
-    metaVarGroups = stronglyConnCompR (map mkMetaNode metaVars')
-  metaVarsNoLoops <- forM metaVarGroups $ \case
-    AcyclicSCC (tyU, metaVar, _) -> return (metaVar, tyU)
-    CyclicSCC grp -> customFailure (SchemaCyclicMetaDecls (map snd3 grp))
-  let
-    go acc [] = return acc
-    go acc ((metaVar, tyU):xs) = do
-      -- any metavariable used in 'tyU' must be present in 'acc'
-      -- because the input list is toposorted
-      tyUnion <- substTyU acc tyU
-      go (HashMap.insert metaVar tyUnion acc) xs
-  go HashMap.empty metaVarsNoLoops
-
-lookupMetaVar :: HashMap MetaVar TyUnion -> MetaVar -> Parser SchemaParseErr TyUnion
-lookupMetaVar metaDecls mv =
-  case HashMap.lookup mv metaDecls of
-    Nothing -> customFailure (SchemaMetaVarNotDefined mv)
-    Just a -> return a
-
-substTyU :: HashMap MetaVar TyUnion -> TyU -> Parser SchemaParseErr TyUnion
-substTyU metaDecls (TyU mvs tns) = do
-  tyUnions' <- traverse (lookupMetaVar metaDecls) (HashSet.toList mvs)
-  return $ sconcat (TyUnion tns :| tyUnions')
-
-substTyDecls ::
-  HashMap MetaVar TyUnion ->
-  [(TyName, Ty')] ->
-  Parser SchemaParseErr (HashMap TyName Ty)
-substTyDecls metaDecls tyDecls' = do
-  let dups = getDups (map fst tyDecls')
-  unless (null dups) $ customFailure (SchemaConflictingTypeDecls dups)
-  tyDecls <- traverse (substTyDecl metaDecls) tyDecls'
-  return (HashMap.fromList tyDecls)
-
-substTyDecl ::
-  HashMap MetaVar TyUnion ->
-  (TyName, Ty') ->
-  Parser SchemaParseErr (TyName, Ty)
-substTyDecl metaDecls (tyName, ty') =
-  case ty' of
-    TySeq' tyU -> do
-      tyUnion <- substTyU metaDecls tyU
-      return (tyName, TySeq tyUnion)
-    TyRec' fields' -> do
-      let dups = getDups (map fst fields')
-      unless (null dups) $ customFailure (SchemaConflictingFieldDecls tyName dups)
-      fields <-
-        forM fields' $ \(fieldName, tyU) -> do
-          tyUnion <- substTyU metaDecls tyU
-          return (fieldName, tyUnion)
-      return (tyName, TyRec (HashMap.fromList fields))
-    TyStr' ->
-      return (tyName, TyStr)
-
-pDecl :: Parser SchemaParseErr Decl
-pDecl = TyDecl <$> pTyDecl <|> MetaDecl <$> pMetaDecl
-
-pMetaDecl :: Parser SchemaParseErr (MetaVar, TyU)
-pMetaDecl = do
-  metaVar <- pMetaVar
-  pSymbol "="
-  tyU <- pTyU
-  pSemicolon
-  return (metaVar, tyU)
-
-pTyU1 :: Parser SchemaParseErr TyU
-pTyU1 =
-  tyU_MetaVar <$> pMetaVar <|>
-  tyU_TyName <$> pTyName
-
-pTyU :: Parser SchemaParseErr TyU
-pTyU = sconcat <$> (pTyU1 `NonEmpty.sepBy1` pBar)
-
-pTyDecl :: Parser SchemaParseErr (TyName, Ty')
-pTyDecl = do
-  tyName <- pTyName
-  ty <-
-    pSymbol "=" *> pTy <|>
-    return (TyRec' [])
-  pSemicolon
-  return (tyName, ty)
-
-pTy :: Parser SchemaParseErr Ty'
-pTy =
-  TyStr' <$ pSymbol "!str" <|>
-  TyRec' <$> try pRecTy <|>
-  TySeq' <$> pSeqTy
-
-pRecTy :: Parser SchemaParseErr [(FieldName, TyU)]
-pRecTy = concat <$> (pFieldDecl `sepBy1` pComma)
-
-pFieldDecl :: Parser SchemaParseErr [(FieldName, TyU)]
-pFieldDecl = do
-  fieldNames <- pFieldName `sepBy1` pComma
-  pColon
-  tyU <- pTyU
-  return [(fieldName, tyU) | fieldName <- fieldNames]
-
-pSeqTy :: Parser SchemaParseErr TyU
-pSeqTy =
-  between (pSymbol "(") (pSymbol ")*") pTyU <|>
-  pTyU1 <* pSymbol "*"
-
-pMetaVar :: Parser SchemaParseErr MetaVar
-pMetaVar = pLexeme $ MetaVar <$> between (char '<') (char '>') pName
 
 --------------------------------------------------------------------------------
 -- Object
@@ -371,17 +130,3 @@ pPathSegment = do
       PathSegmentSeq tyName <$>
       between (char '[') (char ']') (intToIndex <$> L.decimal)
   pRec <|> pSeq
-
---------------------------------------------------------------------------------
--- Utils
---------------------------------------------------------------------------------
-
-getDups :: (Hashable a, Eq a) => [a] -> [a]
-getDups =
-  HashMap.keys .
-  HashMap.filter id .
-  HashMap.fromListWith (\_ _ -> True) .
-  map (\x -> (x,False))
-
-snd3 :: (a, b, c) -> b
-snd3 (_, x, _) = x

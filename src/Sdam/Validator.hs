@@ -8,8 +8,9 @@ module Sdam.Validator
     validate
   ) where
 
-import Data.Foldable (toList)
+import Data.Foldable (toList, length)
 import Data.HashMap.Strict (HashMap)
+import Data.Sequence.NonEmpty (NonEmptySeq)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashSet as HashSet
 import Sdam.Core
@@ -17,14 +18,11 @@ import Sdam.Core
 data ValidationError =
   UnknownTyName TyName |
   TypeMismatch TyName TyUnion |
-  ExpectedStrFoundSeq TyName |
   ExpectedStrFoundRec TyName |
   ExpectedRecFoundStr TyName |
-  ExpectedRecFoundSeq TyName |
-  ExpectedSeqFoundStr TyName |
-  ExpectedSeqFoundRec TyName |
   RecMissingField FieldName |
-  RecExtraField FieldName
+  RecExtraField FieldName |
+  RecRepeatedField FieldName
 
 type ValidationResult = [(Path, ValidationError)]
 
@@ -61,49 +59,45 @@ validate Schema{schemaTypes} = vObject mempty Nothing
     vValue pb (tyName, TyStr) =
       \case
         ValueStr _ -> []
-        ValueSeq _ -> [(buildPath pb, ExpectedStrFoundSeq tyName)]
         ValueRec _ -> [(buildPath pb, ExpectedStrFoundRec tyName)]
-    vValue pb (tyName, TySeq itemTy) =
-      \case
-        ValueSeq items -> vSeq pb tyName itemTy (toList items)
-        ValueRec _ -> [(buildPath pb, ExpectedSeqFoundRec tyName)]
-        ValueStr _ -> [(buildPath pb, ExpectedSeqFoundStr tyName)]
     vValue pb (tyName, TyRec fieldTys) =
       \case
         ValueRec fields -> vRec pb tyName fieldTys fields
-        ValueSeq _ -> [(buildPath pb, ExpectedRecFoundSeq tyName)]
         ValueStr _ -> [(buildPath pb, ExpectedRecFoundStr tyName)]
-    vSeq ::
-      PathBuilder ->
-      TyName ->
-      TyUnion ->
-      [ValidationObject] ->
-      ValidationResult
-    vSeq pb tyName itemTy items =
-      let
-        pb' i = pb <> mkPathBuilder (PathSegmentSeq tyName i)
-        vSeqItem (i, item) = vObject (pb' i) (Just itemTy) item
-      in
-        concatMap vSeqItem (enumerate items)
     vRec ::
       PathBuilder ->
       TyName ->
-      HashMap FieldName TyUnion ->
-      HashMap FieldName ValidationObject ->
+      HashMap FieldName FieldTy ->
+      HashMap FieldName (NonEmptySeq ValidationObject) ->
       ValidationResult
     vRec pb tyName fieldTys fields =
       let
         p = buildPath pb
-        pb' fieldName = pb <> mkPathBuilder (PathSegmentRec tyName fieldName)
+        pb' fieldName i = pb <> mkPathBuilder (PathSegment tyName fieldName i)
         typedFields = HashMap.intersectionWith (,) fieldTys fields
-        missingFields = HashMap.keys (HashMap.difference fieldTys typedFields)
-        extraFields = HashMap.keys (HashMap.difference fieldTys fields)
-        vRecField (fieldName, (fieldTy, field)) =
-          vObject (pb' fieldName) (Just fieldTy) field
+        requiredFieldTys = HashMap.filter isRequiredFieldTy fieldTys
+        missingFields = HashMap.keys (HashMap.difference requiredFieldTys typedFields)
+        extraFields = HashMap.keys (HashMap.difference fields fieldTys)
+        vRecField (fieldName, (FieldTy tyU mult, objects)) =
+          vMult fieldName mult (length objects) ++
+          concatMap
+            (\(i,obj) -> vObject (pb' fieldName i) (Just tyU) obj)
+            (enumerate (toList objects))
+        vMult fieldName Mult{multUpper} n =
+          case multUpper of
+            UpperBoundInf -> []
+            UpperBoundOne ->
+              if n > 1 then [(p, RecRepeatedField fieldName)] else []
       in
         map (\fieldName -> (p, RecMissingField fieldName)) missingFields ++
         map (\fieldName -> (p, RecExtraField fieldName)) extraFields ++
         concatMap vRecField (HashMap.toList typedFields)
+
+isRequiredFieldTy :: FieldTy -> Bool
+isRequiredFieldTy (FieldTy _ Mult{multLower}) =
+  case multLower of
+    LowerBoundZero -> False
+    LowerBoundOne -> True
 
 enumerate :: [a] -> [(Index, a)]
 enumerate = zip (map intToIndex [0..])

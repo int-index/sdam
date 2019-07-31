@@ -16,12 +16,13 @@ module Sdam.Parser
 
 import Control.Monad
 import Data.HashMap.Strict (HashMap)
-import Data.Sequence (Seq)
+import Data.Sequence.NonEmpty (NonEmptySeq(..))
 import Data.Text (Text)
 import Data.Maybe
+import Data.Hashable (Hashable)
 import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Text as Text
-import GHC.Exts (IsList(fromList))
+import qualified Data.Sequence as Seq
 import Data.Void
 
 import Text.Megaparsec
@@ -79,18 +80,21 @@ pObject = do
 pValue :: Parser ObjectParseErr (Value ParsedObject)
 pValue =
   ValueStr <$> pValueStr <|>
-  ValueSeq <$> pValueSeq <|>
   ValueRec <$> pValueRec
 
-pValueSeq :: Parser ObjectParseErr (Seq ParsedObject)
-pValueSeq =
-  between (pSymbol "[") (pSymbol "]") $
-  fromList <$> (pObject `sepBy` pComma)
+buildHashMapSeq :: (Eq k, Hashable k) => [(k, v)] -> HashMap k (NonEmptySeq v)
+buildHashMapSeq =
+    HashMap.map (\f -> mkNonEmptySeq (f [])) .
+    HashMap.fromListWith (.) .
+    map (\(k, v) -> (k, (v:)))  -- to DList
+  where
+    mkNonEmptySeq (x:xs) = NonEmptySeq x (Seq.fromList xs)
+    mkNonEmptySeq [] = error "buildHashMapSeq: impossible, empty list"
 
-pValueRec :: Parser ObjectParseErr (HashMap FieldName ParsedObject)
+pValueRec :: Parser ObjectParseErr (HashMap FieldName (NonEmptySeq ParsedObject))
 pValueRec =
   between (pSymbol "{") (pSymbol "}") $
-  HashMap.fromList <$> (pFieldDef `sepBy` pComma)
+  buildHashMapSeq <$> (pFieldObject `sepBy` pComma)
 
 pValueStr :: Parser ObjectParseErr Text
 pValueStr = pLexeme $ do
@@ -103,8 +107,8 @@ pValueStr = pLexeme $ do
       (Nothing <$ string "\\&") <|>
       (Just <$> anySingle)
 
-pFieldDef :: Parser ObjectParseErr (FieldName, ParsedObject)
-pFieldDef = do
+pFieldObject :: Parser ObjectParseErr (FieldName, ParsedObject)
+pFieldObject = do
   fieldName <- pFieldName
   pSymbol "="
   object <- pObject
@@ -122,11 +126,7 @@ pPath = Path <$> (pPathSegment `sepBy` char '/')
 pPathSegment :: Parser PathParseErr PathSegment
 pPathSegment = do
   tyName <- TyName <$> pName
-  let
-    pRec =
-      PathSegmentRec tyName <$>
-      (char '.' *> (FieldName <$> pName))
-    pSeq =
-      PathSegmentSeq tyName <$>
-      between (char '[') (char ']') (intToIndex <$> L.decimal)
-  pRec <|> pSeq
+  _ <- char '.'
+  fieldName <- FieldName <$> pName
+  i <- between (char '[') (char ']') (intToIndex <$> L.decimal)
+  return (PathSegment tyName fieldName i)

@@ -12,6 +12,10 @@ module Sdam.Core
 
     -- * Types
     Schema(..),
+    LowerBound(..),
+    UpperBound(..),
+    FieldTy(..),
+    Mult(..),
     Ty(..),
     TyUnion(..),
 
@@ -36,7 +40,7 @@ module Sdam.Core
 import Data.Hashable (Hashable)
 import Data.HashMap.Strict (HashMap)
 import Data.HashSet (HashSet)
-import Data.Sequence (Seq)
+import Data.Sequence.NonEmpty (NonEmptySeq)
 import Data.Text (Text)
 import Data.String (IsString)
 import Control.Exception (ArithException(Underflow), throw)
@@ -108,9 +112,36 @@ language that is being described.
 newtype Schema = Schema { schemaTypes :: HashMap TyName Ty }
   deriving newtype Show
 
+data LowerBound = LowerBoundZero | LowerBoundOne
+  deriving stock Show
+
+data UpperBound = UpperBoundOne | UpperBoundInf
+  deriving stock Show
+
+{-
+
+The multiplicity of a record field.
+
+--------------+------------+------------------------------------
+Exactly one   |  Identity  |  Mult LowerBoundOne  UpperBoundOne
+One or more   |  NonEmpty  |  Mult LowerBoundOne  UpperBoundInf
+Zero or one   |  List      |  Mult LowerBoundZero UpperBoundOne
+Zero or more  |  Maybe     |  Mult LowerBoundZero UpperBoundInf
+--------------+------------+------------------------------------
+
+-}
+data Mult =
+  Mult
+    { multLower :: LowerBound,
+      multUpper :: UpperBound
+    }
+  deriving stock Show
+
+data FieldTy = FieldTy TyUnion Mult
+  deriving stock Show
+
 data Ty =
-  TyRec (HashMap FieldName TyUnion) |
-  TySeq TyUnion |
+  TyRec (HashMap FieldName FieldTy) |
   TyStr
   deriving stock Show
 
@@ -138,7 +169,6 @@ For a given 'Schema', there is a functional dependency between the 'TyName'
 in the 'Object' and the shape of the 'Value':
 
   lookup(tyName, schema) is TyStr   ==>   value is ValueStr
-  lookup(tyName, schema) is TySeq   ==>   value is ValueSeq
   lookup(tyName, schema) is TyRec   ==>   value is ValueRec
 
 A type-indexed representation could be used to guarantee this at compile-time,
@@ -150,9 +180,12 @@ data Object a = Object TyName (Value a)
   deriving stock Show
   deriving stock (Functor, Foldable, Traversable)
 
+-- Non-empty sequence because the absence of an element is already represented
+-- by the absence of a key in the hashmap.
+type MultiHashMap k a = HashMap k (NonEmptySeq a)
+
 data Value a =
-  ValueRec (HashMap FieldName a) |
-  ValueSeq (Seq a) |
+  ValueRec (MultiHashMap FieldName a) |
   ValueStr Text
   deriving stock Show
   deriving stock (Functor, Foldable, Traversable)
@@ -188,9 +221,7 @@ Note that 'PathSegment' is qualified by a 'TyName':
   not over strings.
 
 -}
-data PathSegment =
-  PathSegmentRec TyName FieldName |
-  PathSegmentSeq TyName Index
+data PathSegment = PathSegment TyName FieldName Index
   deriving stock (Eq, Show)
 
 -- Invariant: non-negative.

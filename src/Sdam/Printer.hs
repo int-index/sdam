@@ -18,6 +18,7 @@ import Prelude hiding ((<>))
 
 import Data.Foldable (toList)
 import qualified Data.HashMap.Strict as HashMap
+import Data.Sequence.NonEmpty (NonEmptySeq)
 import Text.PrettyPrint
 
 import Sdam.Name
@@ -39,16 +40,16 @@ rObject (RenderObject (Object tyName v)) =
 
 rValue :: Value RenderObject -> Doc
 rValue (ValueStr s) = text (show s)
-rValue (ValueSeq xs) =
-  brackets . sep . punctuate comma $
-  map rObject (toList xs)
 rValue (ValueRec fields) =
   braces . sep . punctuate comma $
-  map rRecField (HashMap.toList fields)
+  concatMap rRecField (HashMap.toList fields)
 
-rRecField :: (FieldName, RenderObject) -> Doc
-rRecField (fieldName, object) =
-  rFieldName fieldName <+> equals <+> rObject object
+rRecField :: (FieldName, NonEmptySeq RenderObject) -> [Doc]
+rRecField (fieldName, objects) =
+    map rFieldObject (toList objects)
+  where
+    rFieldObject object =
+      rFieldName fieldName <+> equals <+> rObject object
 
 rPath :: Path -> Doc
 rPath (Path ps) =
@@ -57,7 +58,7 @@ rPath (Path ps) =
   map rPathSegment ps
 
 rPathSegment :: PathSegment -> Doc
-rPathSegment (PathSegmentRec tyName fieldName) =
-  rTyName tyName <> char '.' <> rFieldName fieldName
-rPathSegment (PathSegmentSeq tyName i) =
-  rTyName tyName <> brackets (int (indexToInt i))
+rPathSegment (PathSegment tyName fieldName i) =
+  rTyName tyName
+    <> char '.' <> rFieldName fieldName
+    <> brackets (int (indexToInt i))

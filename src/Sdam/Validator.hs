@@ -97,7 +97,7 @@ validate Schema{schemaTypes} = vObject mempty Nothing
         pb' fieldName = pb <> mkPathBuilder (PathSegmentRec tyName fieldName)
         typedFields = HashMap.intersectionWith (,) fieldTys fields
         missingFields = HashMap.keys (HashMap.difference fieldTys typedFields)
-        extraFields = HashMap.keys (HashMap.difference fieldTys fields)
+        extraFields = HashMap.keys (HashMap.difference fields fieldTys)
         vRecField (fieldName, (fieldTy, field)) =
           vObject (pb' fieldName) (Just fieldTy) field
       in

@@ -32,7 +32,8 @@ module Sdam.Core
     PathBuilder(..),
     mkPathBuilder,
     buildPath,
-    PathTrie(..)
+    PathTrie(..),
+    pathTrieLookup
   ) where
 
 import Data.Hashable (Hashable)
@@ -238,3 +239,6 @@ instance Semigroup a => Semigroup (PathTrie a) where
 instance Monoid a => Monoid (PathTrie a) where
   mempty = PathTrie mempty HashMap.empty
 
+pathTrieLookup :: Monoid a => PathSegment -> PathTrie a -> PathTrie a
+pathTrieLookup pathSegment pathTrie =
+  HashMap.lookupDefault mempty pathSegment (pathTrieChildren pathTrie)

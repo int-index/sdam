@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase, DerivingStrategies, RecordWildCards,
-             GeneralizedNewtypeDeriving, NamedFieldPuns #-}
+             GeneralizedNewtypeDeriving, NamedFieldPuns, DeriveGeneric #-}
 
 module Sdam.Validator
   ( ValidationError(..),
@@ -8,10 +8,13 @@ module Sdam.Validator
     validate
   ) where
 
-import Data.Foldable (toList)
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as HashMap
-import qualified Data.HashSet as HashSet
+import Control.Arrow ((***))
+import Data.List as List
+import Data.Foldable as Foldable
+import Data.HashMap.Strict as HashMap
+import Data.HashSet as HashSet
+import Data.Hashable (Hashable)
+import GHC.Generics (Generic)
 import Sdam.Core
 
 data ValidationError =
@@ -25,85 +28,95 @@ data ValidationError =
   ExpectedSeqFoundRec TyName |
   RecMissingField FieldName |
   RecExtraField FieldName
+  deriving (Eq, Show, Generic)
 
-type ValidationResult = [(Path, ValidationError)]
+instance Hashable ValidationError
 
-newtype ValidationObject = ValidationObject (Object ValidationObject)
-  deriving newtype Show
+type ValidationResult = PathTrie (HashSet ValidationError)
+
+validationError :: ValidationError -> ValidationResult
+validationError e = mempty{ pathTrieRoot = HashSet.singleton e }
+
+data ValidationObject =
+  ValidationObject (Object ValidationObject) |
+  SkipValidation
+  deriving stock Show
 
 validate :: Schema -> ValidationObject -> ValidationResult
-validate Schema{schemaTypes} = vObject mempty Nothing
+validate Schema{schemaTypes} = vObject Nothing
   where
     vObject ::
-      PathBuilder ->
       Maybe TyUnion ->
       ValidationObject ->
       ValidationResult
-    vObject pb mTyU (ValidationObject (Object tyName value)) =
+    vObject _ SkipValidation = mempty
+    vObject mTyU (ValidationObject (Object tyName value)) =
       case HashMap.lookup tyName schemaTypes of
-        Nothing -> [(buildPath pb, UnknownTyName tyName)]
+        Nothing -> validationError (UnknownTyName tyName)
         Just ty ->
-          maybe [] (vObjectTyName pb tyName) mTyU ++
-          vValue pb (tyName, ty) value
+          maybe mempty (vObjectTyName tyName) mTyU <>
+          vValue (tyName, ty) value
     vObjectTyName ::
-      PathBuilder ->
       TyName ->
       TyUnion ->
       ValidationResult
-    vObjectTyName pb tyName tyU@(TyUnion u)
-      | HashSet.member tyName u = []
-      | otherwise = [(buildPath pb, TypeMismatch tyName tyU)]
+    vObjectTyName tyName tyU@(TyUnion u)
+      | HashSet.member tyName u = mempty
+      | otherwise = validationError (TypeMismatch tyName tyU)
     vValue ::
-      PathBuilder ->
       (TyName, Ty) ->
       Value ValidationObject ->
       ValidationResult
-    vValue pb (tyName, TyStr) =
+    vValue (tyName, TyStr) =
       \case
-        ValueStr _ -> []
-        ValueSeq _ -> [(buildPath pb, ExpectedStrFoundSeq tyName)]
-        ValueRec _ -> [(buildPath pb, ExpectedStrFoundRec tyName)]
-    vValue pb (tyName, TySeq itemTy) =
+        ValueStr _ -> mempty
+        ValueSeq _ -> validationError (ExpectedStrFoundSeq tyName)
+        ValueRec _ -> validationError (ExpectedStrFoundRec tyName)
+    vValue (tyName, TySeq itemTyU) =
       \case
-        ValueSeq items -> vSeq pb tyName itemTy (toList items)
-        ValueRec _ -> [(buildPath pb, ExpectedSeqFoundRec tyName)]
-        ValueStr _ -> [(buildPath pb, ExpectedSeqFoundStr tyName)]
-    vValue pb (tyName, TyRec fieldTys) =
+        ValueSeq items -> vSeq tyName itemTyU (Foldable.toList items)
+        ValueRec _ -> validationError (ExpectedSeqFoundRec tyName)
+        ValueStr _ -> validationError (ExpectedSeqFoundStr tyName)
+    vValue (tyName, TyRec fieldTys) =
       \case
-        ValueRec fields -> vRec pb tyName fieldTys fields
-        ValueSeq _ -> [(buildPath pb, ExpectedRecFoundSeq tyName)]
-        ValueStr _ -> [(buildPath pb, ExpectedRecFoundStr tyName)]
+        ValueRec fields -> vRec tyName fieldTys fields
+        ValueSeq _ -> validationError (ExpectedRecFoundSeq tyName)
+        ValueStr _ -> validationError (ExpectedRecFoundStr tyName)
     vSeq ::
-      PathBuilder ->
       TyName ->
       TyUnion ->
       [ValidationObject] ->
       ValidationResult
-    vSeq pb tyName itemTy items =
+    vSeq tyName itemTyU items =
       let
-        pb' i = pb <> mkPathBuilder (PathSegmentSeq tyName i)
-        vSeqItem (i, item) = vObject (pb' i) (Just itemTy) item
+        mkPathSegment i = PathSegmentSeq tyName (intToIndex i)
+        vSeqItem = vObject (Just itemTyU)
+        pathTrieRoot = mempty
+        pathTrieChildren =
+          HashMap.fromList $
+          List.map (mkPathSegment *** vSeqItem) $
+          List.zip [0..] items
       in
-        concatMap vSeqItem (enumerate items)
+        PathTrie{pathTrieRoot, pathTrieChildren}
     vRec ::
-      PathBuilder ->
       TyName ->
       HashMap FieldName TyUnion ->
       HashMap FieldName ValidationObject ->
       ValidationResult
-    vRec pb tyName fieldTys fields =
+    vRec tyName fieldTys fields =
       let
-        p = buildPath pb
-        pb' fieldName = pb <> mkPathBuilder (PathSegmentRec tyName fieldName)
         typedFields = HashMap.intersectionWith (,) fieldTys fields
         missingFields = HashMap.keys (HashMap.difference fieldTys typedFields)
         extraFields = HashMap.keys (HashMap.difference fields fieldTys)
-        vRecField (fieldName, (fieldTy, field)) =
-          vObject (pb' fieldName) (Just fieldTy) field
+        mkPathSegment fieldName = PathSegmentRec tyName fieldName
+        vRecField (fieldTyU, field) = vObject (Just fieldTyU) field
+        pathTrieRoot =
+          HashSet.fromList $
+          List.map RecMissingField missingFields <>
+          List.map RecExtraField extraFields
+        pathTrieChildren =
+          HashMap.fromList $
+          List.map (mkPathSegment *** vRecField) $
+          HashMap.toList typedFields
       in
-        map (\fieldName -> (p, RecMissingField fieldName)) missingFields ++
-        map (\fieldName -> (p, RecExtraField fieldName)) extraFields ++
-        concatMap vRecField (HashMap.toList typedFields)
-
-enumerate :: [a] -> [(Index, a)]
-enumerate = zip (map intToIndex [0..])
+        PathTrie{pathTrieRoot, pathTrieChildren}

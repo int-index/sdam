@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingStrategies, GeneralizedNewtypeDeriving,
              NamedFieldPuns, StandaloneDeriving, TypeApplications,
-             DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+             DeriveFunctor, DeriveFoldable, DeriveTraversable,
+             DeriveGeneric #-}
 
 module Sdam.Core
   (
@@ -30,16 +31,18 @@ module Sdam.Core
     indexToInt,
     PathBuilder(..),
     mkPathBuilder,
-    buildPath
+    buildPath,
+    PathTrie(..)
   ) where
 
 import Data.Hashable (Hashable)
-import Data.HashMap.Strict (HashMap)
+import Data.HashMap.Strict as HashMap
 import Data.HashSet (HashSet)
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.String (IsString)
 import Control.Exception (ArithException(Underflow), throw)
+import GHC.Generics (Generic)
 
 import Sdam.Name
 
@@ -115,7 +118,7 @@ data Ty =
   deriving stock Show
 
 newtype TyUnion = TyUnion (HashSet TyName)
-  deriving newtype (Show, Semigroup, Monoid)
+  deriving newtype (Show, Semigroup, Monoid, Eq, Hashable)
 
 --------------------------------------------------------------------------------
 -- Objects/Values
@@ -191,11 +194,13 @@ Note that 'PathSegment' is qualified by a 'TyName':
 data PathSegment =
   PathSegmentRec TyName FieldName |
   PathSegmentSeq TyName Index
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Generic)
+
+instance Hashable PathSegment
 
 -- Invariant: non-negative.
 newtype Index = Index Int
-  deriving newtype (Eq, Show)
+  deriving newtype (Eq, Show, Hashable)
 
 intToIndex :: Int -> Index
 intToIndex i =
@@ -219,3 +224,17 @@ mkPathBuilder ps = PathBuilder (consPath ps)
 
 buildPath :: PathBuilder -> Path
 buildPath (PathBuilder pb) = pb emptyPath
+
+data PathTrie a =
+  PathTrie
+    { pathTrieRoot :: a,
+      pathTrieChildren :: HashMap PathSegment (PathTrie a)
+    }
+
+instance Semigroup a => Semigroup (PathTrie a) where
+  PathTrie r1 c1 <> PathTrie r2 c2 =
+    PathTrie (r1 <> r2) (HashMap.unionWith (<>) c1 c2)
+
+instance Monoid a => Monoid (PathTrie a) where
+  mempty = PathTrie mempty HashMap.empty
+

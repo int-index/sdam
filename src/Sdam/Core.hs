@@ -17,7 +17,6 @@ module Sdam.Core
     TyUnion(..),
 
     -- * Values
-    Object(..),
     Value(..),
 
     -- * Paths
@@ -122,24 +121,24 @@ newtype TyUnion = TyUnion (HashSet TyName)
   deriving newtype (Show, Semigroup, Monoid, Eq, Hashable)
 
 --------------------------------------------------------------------------------
--- Objects/Values
+-- Values
 --------------------------------------------------------------------------------
 
 {-
 
-'Object' and 'Value' are parametrized by the type of their fields. In the trivial
-case, we can take the fixpoint of 'Object' to have objects that are made of objects:
+'Value' is parametrized by the type of its fields. In the trivial case, we can
+take the fixpoint of 'Value' to have values that are made of values:
 
-  newtype AST = AST (Object AST)
+  newtype AST = AST (Value AST)
 
 However, we may also use this for extension:
 
   data Editable =
-      Node UUID (Object Editable)
+      Node UUID (Value Editable)
     | Hole
 
 For a given 'Schema', there is a functional dependency between the 'TyName'
-in the 'Object' and the shape of the 'Value':
+in the 'Value' and the shape of the 'Value':
 
   lookup(tyName, schema) is TyStr   ==>   value is ValueStr
   lookup(tyName, schema) is TySeq   ==>   value is ValueSeq
@@ -150,14 +149,11 @@ but this would involve promoting the schema to the type-level and using
 singleton types.
 
 -}
-data Object a = Object TyName (Value a)
-  deriving stock Show
-  deriving stock (Functor, Foldable, Traversable)
 
 data Value a =
-  ValueRec (HashMap FieldName a) |
-  ValueSeq (Seq a) |
-  ValueStr Text
+  ValueRec TyName (HashMap FieldName a) |
+  ValueSeq TyName (Seq a) |
+  ValueStr TyName Text
   deriving stock Show
   deriving stock (Functor, Foldable, Traversable)
 

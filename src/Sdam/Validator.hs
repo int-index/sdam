@@ -4,7 +4,7 @@
 module Sdam.Validator
   ( ValidationError(..),
     ValidationResult,
-    ValidationObject(..),
+    ValidationValue(..),
     validate
   ) where
 
@@ -14,6 +14,7 @@ import Data.Foldable as Foldable
 import Data.HashMap.Strict as HashMap
 import Data.HashSet as HashSet
 import Data.Hashable (Hashable)
+import Data.Sequence (Seq)
 import GHC.Generics (Generic)
 import Sdam.Core
 
@@ -37,79 +38,83 @@ type ValidationResult = PathTrie (HashSet ValidationError)
 validationError :: ValidationError -> ValidationResult
 validationError e = mempty{ pathTrieRoot = HashSet.singleton e }
 
-data ValidationObject =
-  ValidationObject (Object ValidationObject) |
+data ValidationValue =
+  ValidationValue (Value ValidationValue) |
   SkipValidation
   deriving stock Show
 
-validate :: Schema -> ValidationObject -> ValidationResult
-validate Schema{schemaTypes} = vObject Nothing
+validate :: Schema -> ValidationValue -> ValidationResult
+validate Schema{schemaTypes} = vValue Nothing
   where
-    vObject ::
+    vValue ::
       Maybe TyUnion ->
-      ValidationObject ->
+      ValidationValue ->
       ValidationResult
-    vObject _ SkipValidation = mempty
-    vObject mTyU (ValidationObject (Object tyName value)) =
+    vValue _ SkipValidation = mempty
+    vValue mTyU (ValidationValue (ValueStr tyName _)) =
+      vTyName tyName mTyU (\ty -> vStr tyName ty)
+    vValue mTyU (ValidationValue (ValueRec tyName fields)) =
+      vTyName tyName mTyU (\ty -> vRec tyName ty fields)
+    vValue mTyU (ValidationValue (ValueSeq tyName items)) =
+      vTyName tyName mTyU (\ty -> vSeq tyName ty items)
+
+    vTyName ::
+      TyName ->
+      Maybe TyUnion ->
+      (Ty -> ValidationResult) ->
+      ValidationResult
+    vTyName tyName mTyU cont =
       case HashMap.lookup tyName schemaTypes of
         Nothing -> validationError (UnknownTyName tyName)
         Just ty ->
-          maybe mempty (vObjectTyName tyName) mTyU <>
-          vValue (tyName, ty) value
-    vObjectTyName ::
+          cont ty <>
+          case mTyU of
+            Nothing -> mempty
+            Just tyU@(TyUnion u) ->
+              if HashSet.member tyName u
+              then mempty
+              else validationError (TypeMismatch tyName tyU)
+
+    vStr ::
       TyName ->
-      TyUnion ->
+      Ty ->
       ValidationResult
-    vObjectTyName tyName tyU@(TyUnion u)
-      | HashSet.member tyName u = mempty
-      | otherwise = validationError (TypeMismatch tyName tyU)
-    vValue ::
-      (TyName, Ty) ->
-      Value ValidationObject ->
-      ValidationResult
-    vValue (tyName, TyStr) =
-      \case
-        ValueStr _ -> mempty
-        ValueSeq _ -> validationError (ExpectedStrFoundSeq tyName)
-        ValueRec _ -> validationError (ExpectedStrFoundRec tyName)
-    vValue (tyName, TySeq itemTyU) =
-      \case
-        ValueSeq items -> vSeq tyName itemTyU (Foldable.toList items)
-        ValueRec _ -> validationError (ExpectedSeqFoundRec tyName)
-        ValueStr _ -> validationError (ExpectedSeqFoundStr tyName)
-    vValue (tyName, TyRec fieldTys) =
-      \case
-        ValueRec fields -> vRec tyName fieldTys fields
-        ValueSeq _ -> validationError (ExpectedRecFoundSeq tyName)
-        ValueStr _ -> validationError (ExpectedRecFoundStr tyName)
+    vStr _ TyStr = mempty
+    vStr tyName (TySeq _) = validationError (ExpectedSeqFoundStr tyName)
+    vStr tyName (TyRec _) = validationError (ExpectedRecFoundStr tyName)
+
     vSeq ::
       TyName ->
-      TyUnion ->
-      [ValidationObject] ->
+      Ty ->
+      Seq ValidationValue ->
       ValidationResult
-    vSeq tyName itemTyU items =
+    vSeq tyName TyStr _ = validationError (ExpectedStrFoundSeq tyName)
+    vSeq tyName (TyRec _) _ = validationError (ExpectedRecFoundSeq tyName)
+    vSeq tyName (TySeq itemTyU) items =
       let
         mkPathSegment i = PathSegmentSeq tyName (intToIndex i)
-        vSeqItem = vObject (Just itemTyU)
+        vSeqItem = vValue (Just itemTyU)
         pathTrieRoot = mempty
         pathTrieChildren =
           HashMap.fromList $
           List.map (mkPathSegment *** vSeqItem) $
-          List.zip [0..] items
+          List.zip [0..] (Foldable.toList items)
       in
         PathTrie{pathTrieRoot, pathTrieChildren}
     vRec ::
       TyName ->
-      HashMap FieldName TyUnion ->
-      HashMap FieldName ValidationObject ->
+      Ty ->
+      HashMap FieldName ValidationValue ->
       ValidationResult
-    vRec tyName fieldTys fields =
+    vRec tyName TyStr _ = validationError (ExpectedStrFoundRec tyName)
+    vRec tyName (TySeq _) _ = validationError (ExpectedSeqFoundRec tyName)
+    vRec tyName (TyRec fieldTys) fields =
       let
         typedFields = HashMap.intersectionWith (,) fieldTys fields
         missingFields = HashMap.keys (HashMap.difference fieldTys typedFields)
         extraFields = HashMap.keys (HashMap.difference fields fieldTys)
         mkPathSegment fieldName = PathSegmentRec tyName fieldName
-        vRecField (fieldTyU, field) = vObject (Just fieldTyU) field
+        vRecField (fieldTyU, field) = vValue (Just fieldTyU) field
         pathTrieRoot =
           HashSet.fromList $
           List.map RecMissingField missingFields <>

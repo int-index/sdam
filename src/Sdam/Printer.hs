@@ -3,9 +3,9 @@
 
 module Sdam.Printer
   (
-    -- Object/Value
-    rObject,
-    RenderObject(..),
+    -- Value
+    rValue,
+    RenderValue(..),
 
     -- Path
     rPath,
@@ -30,25 +30,24 @@ rTyName (TyName name) = rName name
 rFieldName (FieldName name) = rName name
 rName = text . nameToStr
 
-newtype RenderObject = RenderObject (Object RenderObject)
+newtype RenderValue = RenderValue (Value RenderValue)
   deriving newtype Show
 
-rObject :: RenderObject -> Doc
-rObject (RenderObject (Object tyName v)) =
-  rTyName tyName <+> rValue v
-
-rValue :: Value RenderObject -> Doc
-rValue (ValueStr s) = text (show s)
-rValue (ValueSeq xs) =
+rValue :: RenderValue -> Doc
+rValue (RenderValue (ValueStr tyName s)) =
+  rTyName tyName <+> text (show s)
+rValue (RenderValue (ValueSeq tyName xs)) =
+  (<+>) (rTyName tyName) $
   brackets . sep . punctuate comma $
-  map rObject (toList xs)
-rValue (ValueRec fields) =
+  map rValue (toList xs)
+rValue (RenderValue (ValueRec tyName fields)) =
+  (<+>) (rTyName tyName) $
   braces . sep . punctuate comma $
   map rRecField (HashMap.toList fields)
 
-rRecField :: (FieldName, RenderObject) -> Doc
-rRecField (fieldName, object) =
-  rFieldName fieldName <+> equals <+> rObject object
+rRecField :: (FieldName, RenderValue) -> Doc
+rRecField (fieldName, value) =
+  rFieldName fieldName <+> equals <+> rValue value
 
 rPath :: Path -> Doc
 rPath (Path ps) =

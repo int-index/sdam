@@ -3,9 +3,9 @@
 
 module Sdam.Parser
   (
-    -- Object/Value
-    pObject,
-    ParsedObject(..),
+    -- Value
+    pValue,
+    ParsedValue(..),
 
     -- Path
     pPath,
@@ -62,56 +62,53 @@ pFieldName :: Ord e => Parser e FieldName
 pFieldName = pLexeme (FieldName <$> pName)
 
 --------------------------------------------------------------------------------
--- Object
+-- Value
 --------------------------------------------------------------------------------
 
-type ObjectParseErr = Void
+type ValueParseErr = Void
 
-newtype ParsedObject = ParsedObject (Object ParsedObject)
+newtype ParsedValue = ParsedValue (Value ParsedValue)
   deriving newtype Show
 
-pObject :: Parser ObjectParseErr ParsedObject
-pObject = do
+pValue :: Parser ValueParseErr ParsedValue
+pValue = do
   tyName <- pTyName
-  v <- pValue
-  return (ParsedObject (Object tyName v))
+  v <-
+    ValueStr tyName <$> pValueStr <|>
+    ValueSeq tyName <$> pValueSeq <|>
+    ValueRec tyName <$> pValueRec
+  return (ParsedValue v)
 
-pValue :: Parser ObjectParseErr (Value ParsedObject)
-pValue =
-  ValueStr <$> pValueStr <|>
-  ValueSeq <$> pValueSeq <|>
-  ValueRec <$> pValueRec
-
-pValueSeq :: Parser ObjectParseErr (Seq ParsedObject)
+pValueSeq :: Parser ValueParseErr (Seq ParsedValue)
 pValueSeq =
   between (pSymbol "[") (pSymbol "]") $
-  fromList <$> (pObject `sepBy` pComma)
+  fromList <$> (pValue `sepBy` pComma)
 
-pValueRec :: Parser ObjectParseErr (HashMap FieldName ParsedObject)
+pValueRec :: Parser ValueParseErr (HashMap FieldName ParsedValue)
 pValueRec =
   between (pSymbol "{") (pSymbol "}") $
   HashMap.fromList <$> (pFieldDef `sepBy` pComma)
 
-pValueStr :: Parser ObjectParseErr Text
+pValueStr :: Parser ValueParseErr Text
 pValueStr = pLexeme $ do
   void (char '\"')
   Text.pack . catMaybes <$> manyTill pChar (char '\"')
   where
-    pChar :: Parser ObjectParseErr (Maybe Char)
+    pChar :: Parser ValueParseErr (Maybe Char)
     pChar =
       (Just <$> L.charLiteral) <|>
       (Nothing <$ string "\\&") <|>
       (Just <$> anySingle)
 
-pFieldDef :: Parser ObjectParseErr (FieldName, ParsedObject)
+pFieldDef :: Parser ValueParseErr (FieldName, ParsedValue)
 pFieldDef = do
   fieldName <- pFieldName
   pSymbol "="
-  object <- pObject
-  return (fieldName, object)
+  value <- pValue
+  return (fieldName, value)
 
 --------------------------------------------------------------------------------
--- Object
+-- Value
 --------------------------------------------------------------------------------
 
 type PathParseErr = Void

@@ -51,17 +51,17 @@ import Sdam.Name
 -- Names
 --------------------------------------------------------------------------------
 
-newtype TyName = TyName { tyName :: Name }
+newtype TyName = TyName Name
   deriving newtype (Eq, Ord, Show, IsString, Hashable)
 
 tyNameStr :: TyName -> String
-tyNameStr TyName{tyName} = nameToStr tyName
+tyNameStr (TyName name) = nameToStr name
 
-newtype FieldName = FieldName { fieldName :: Name }
+newtype FieldName = FieldName Name
   deriving newtype (Eq, Ord, Show, IsString, Hashable)
 
 fieldNameStr :: FieldName -> String
-fieldNameStr FieldName{fieldName} = nameToStr fieldName
+fieldNameStr (FieldName name) = nameToStr name
 
 --------------------------------------------------------------------------------
 -- Types

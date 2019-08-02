@@ -26,8 +26,8 @@ import Sdam.Core
 rTyName :: TyName -> Doc
 rFieldName :: FieldName -> Doc
 rName :: Name -> Doc
-rTyName TyName{tyName} = rName tyName
-rFieldName FieldName{fieldName} = rName fieldName
+rTyName (TyName name) = rName name
+rFieldName (FieldName name) = rName name
 rName = text . nameToStr
 
 newtype RenderObject = RenderObject (Object RenderObject)

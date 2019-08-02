@@ -4,10 +4,10 @@ Lam {
     Pi {
       var = Var "t",
       ty = Box {},
-      body = Tup []
+      body = []
     },
   body =
-    Tup [
+    [
       App {
         fn = Var "f",
         arg = IVar {

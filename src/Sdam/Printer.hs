@@ -36,8 +36,7 @@ newtype RenderValue = RenderValue (Value RenderValue)
 rValue :: RenderValue -> Doc
 rValue (RenderValue (ValueStr tyName s)) =
   rTyName tyName <+> text (show s)
-rValue (RenderValue (ValueSeq tyName xs)) =
-  (<+>) (rTyName tyName) $
+rValue (RenderValue (ValueSeq xs)) =
   brackets . sep . punctuate comma $
   map rValue (toList xs)
 rValue (RenderValue (ValueRec tyName fields)) =
@@ -58,5 +57,5 @@ rPath (Path ps) =
 rPathSegment :: PathSegment -> Doc
 rPathSegment (PathSegmentRec tyName fieldName) =
   rTyName tyName <> char '.' <> rFieldName fieldName
-rPathSegment (PathSegmentSeq tyName i) =
-  rTyName tyName <> brackets (int (indexToInt i))
+rPathSegment (PathSegmentSeq i) =
+  int (indexToInt i)

@@ -71,13 +71,12 @@ newtype ParsedValue = ParsedValue (Value ParsedValue)
   deriving newtype Show
 
 pValue :: Parser ValueParseErr ParsedValue
-pValue = do
-  tyName <- pTyName
-  v <-
-    ValueStr tyName <$> pValueStr <|>
-    ValueSeq tyName <$> pValueSeq <|>
-    ValueRec tyName <$> pValueRec
-  return (ParsedValue v)
+pValue =
+  fmap ParsedValue $
+  (ValueSeq <$> pValueSeq) <|>
+  (pTyName >>= \tyName ->
+   ValueStr tyName <$> pValueStr <|>
+   ValueRec tyName <$> pValueRec)
 
 pValueSeq :: Parser ValueParseErr (Seq ParsedValue)
 pValueSeq =
@@ -117,13 +116,12 @@ pPath :: Parser PathParseErr Path
 pPath = Path <$> (pPathSegment `sepBy` char '/')
 
 pPathSegment :: Parser PathParseErr PathSegment
-pPathSegment = do
-  tyName <- TyName <$> pName
+pPathSegment =
   let
+    pSeq = PathSegmentSeq . intToIndex <$> L.decimal
     pRec =
-      PathSegmentRec tyName <$>
-      (char '.' *> (FieldName <$> pName))
-    pSeq =
-      PathSegmentSeq tyName <$>
-      between (char '[') (char ']') (intToIndex <$> L.decimal)
-  pRec <|> pSeq
+      PathSegmentRec
+        <$> (TyName <$> pName)
+        <*> (char '.' *> (FieldName <$> pName))
+  in
+    pSeq <|> pRec

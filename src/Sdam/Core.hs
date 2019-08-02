@@ -113,12 +113,23 @@ newtype Schema = Schema { schemaTypes :: HashMap TyName Ty }
 
 data Ty =
   TyRec (HashMap FieldName TyUnion) |
-  TySeq TyUnion |
   TyStr
   deriving stock Show
 
-newtype TyUnion = TyUnion (HashSet TyName)
-  deriving newtype (Show, Semigroup, Monoid, Eq, Hashable)
+-- A | B | C | (D | E | F)*
+data TyUnion =
+  TyUnion
+    (HashSet TyName)   -- the types
+    (Maybe TyUnion)    -- the (...)* clause
+  deriving stock (Show, Eq, Generic)
+
+instance Hashable TyUnion
+
+instance Semigroup TyUnion where
+  TyUnion u1 r1 <> TyUnion u2 r2 = TyUnion (u1 <> u2) (r1 <> r2)
+
+instance Monoid TyUnion where
+  mempty = TyUnion mempty mempty
 
 --------------------------------------------------------------------------------
 -- Values
@@ -152,8 +163,8 @@ singleton types.
 
 data Value a =
   ValueRec TyName (HashMap FieldName a) |
-  ValueSeq TyName (Seq a) |
-  ValueStr TyName Text
+  ValueStr TyName Text |
+  ValueSeq (Seq a)
   deriving stock Show
   deriving stock (Functor, Foldable, Traversable)
 
@@ -190,7 +201,7 @@ Note that 'PathSegment' is qualified by a 'TyName':
 -}
 data PathSegment =
   PathSegmentRec TyName FieldName |
-  PathSegmentSeq TyName Index
+  PathSegmentSeq Index
   deriving stock (Eq, Show, Generic)
 
 instance Hashable PathSegment

@@ -20,13 +20,10 @@ import Sdam.Core
 
 data ValidationError =
   UnknownTyName TyName |
+  UnexpectedSeq |
   TypeMismatch TyName TyUnion |
-  ExpectedStrFoundSeq TyName |
   ExpectedStrFoundRec TyName |
   ExpectedRecFoundStr TyName |
-  ExpectedRecFoundSeq TyName |
-  ExpectedSeqFoundStr TyName |
-  ExpectedSeqFoundRec TyName |
   RecMissingField FieldName |
   RecExtraField FieldName
   deriving (Eq, Show, Generic)
@@ -55,8 +52,10 @@ validate Schema{schemaTypes} = vValue Nothing
       vTyName tyName mTyU (\ty -> vStr tyName ty)
     vValue mTyU (ValidationValue (ValueRec tyName fields)) =
       vTyName tyName mTyU (\ty -> vRec tyName ty fields)
-    vValue mTyU (ValidationValue (ValueSeq tyName items)) =
-      vTyName tyName mTyU (\ty -> vSeq tyName ty items)
+    vValue mTyU (ValidationValue (ValueSeq items)) =
+      case mTyU of
+        Nothing -> mempty
+        Just (TyUnion _ mItemTyU) -> vSeq mItemTyU items
 
     vTyName ::
       TyName ->
@@ -70,7 +69,7 @@ validate Schema{schemaTypes} = vValue Nothing
           cont ty <>
           case mTyU of
             Nothing -> mempty
-            Just tyU@(TyUnion u) ->
+            Just tyU@(TyUnion u _) ->
               if HashSet.member tyName u
               then mempty
               else validationError (TypeMismatch tyName tyU)
@@ -80,19 +79,16 @@ validate Schema{schemaTypes} = vValue Nothing
       Ty ->
       ValidationResult
     vStr _ TyStr = mempty
-    vStr tyName (TySeq _) = validationError (ExpectedSeqFoundStr tyName)
     vStr tyName (TyRec _) = validationError (ExpectedRecFoundStr tyName)
 
     vSeq ::
-      TyName ->
-      Ty ->
+      Maybe TyUnion ->
       Seq ValidationValue ->
       ValidationResult
-    vSeq tyName TyStr _ = validationError (ExpectedStrFoundSeq tyName)
-    vSeq tyName (TyRec _) _ = validationError (ExpectedRecFoundSeq tyName)
-    vSeq tyName (TySeq itemTyU) items =
+    vSeq Nothing _ = validationError UnexpectedSeq
+    vSeq (Just itemTyU) items =
       let
-        mkPathSegment i = PathSegmentSeq tyName (intToIndex i)
+        mkPathSegment i = PathSegmentSeq (intToIndex i)
         vSeqItem = vValue (Just itemTyU)
         pathTrieRoot = mempty
         pathTrieChildren =
@@ -101,13 +97,13 @@ validate Schema{schemaTypes} = vValue Nothing
           List.zip [0..] (Foldable.toList items)
       in
         PathTrie{pathTrieRoot, pathTrieChildren}
+
     vRec ::
       TyName ->
       Ty ->
       HashMap FieldName ValidationValue ->
       ValidationResult
     vRec tyName TyStr _ = validationError (ExpectedStrFoundRec tyName)
-    vRec tyName (TySeq _) _ = validationError (ExpectedSeqFoundRec tyName)
     vRec tyName (TyRec fieldTys) fields =
       let
         typedFields = HashMap.intersectionWith (,) fieldTys fields

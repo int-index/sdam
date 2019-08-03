@@ -68,25 +68,28 @@ fieldNameStr (FieldName name) = nameToStr name
 
 {-
 
-A 'Schema defines the available syntactic constructs: records, sequences, and
-strings. In each subtree position (record fields and sequence elements) there
-is a union of types that are allowed in this position. For instance:
+A 'Schema' defines the available syntactic constructs: records and strings.
+For each record field there is a union of types that is allowed in this
+position:
 
-  FnApp = fn, arg: <expr>;
+  "FnApp" => TyRec "fn"  => Var | Lam | Num | ...
+                   "arg" => Var | Lam | Num | ...
+  "Var"   => TyStr
+  "Lam"   => ...
+  "Num"   => ...
 
-'fn' and 'arg' are subtree positions (record fields, in this case), and
-<expr> is a metavariable that defines a 'TyUnion' that describes syntactic
-constructs that can be used in these positions.
+'fn' and 'arg' are record fields, and (Var | Lam | Num | ...) is a 'TyUnion'
+that lists the syntactic constructs allowed in this position.
 
-This union is by necessity bigger than the actual set of allowed constructs.
-There are various refinements imposed by the type system of the language that
-is being described. For example, 'FnApp' shown above does not disallow
-expressions like
+In practice, the 'TyUnion' is by necessity bigger than the actual set of
+allowed constructs. There are various refinements imposed by the type system
+of the language that is being described. For example, 'FnApp' shown above does
+not disallow expressions like
 
-  negate "hello"
+  not 10
 
-This makes the use of <expr> to describe 'fn' and 'arg' incomplete - it allows
-us to construct invalid expressions.
+This makes the use of (Var | Lam | Num | ...) to describe 'fn' and 'arg'
+incomplete - it allows us to construct invalid expressions.
 
 As another example, when we consider strings that represent variable names, we
 need to track the current scope to decide what strings are allowed.
@@ -152,7 +155,6 @@ For a given 'Schema', there is a functional dependency between the 'TyName'
 in the 'Value' and the shape of the 'Value':
 
   lookup(tyName, schema) is TyStr   ==>   value is ValueStr
-  lookup(tyName, schema) is TySeq   ==>   value is ValueSeq
   lookup(tyName, schema) is TyRec   ==>   value is ValueRec
 
 A type-indexed representation could be used to guarantee this at compile-time,
@@ -189,7 +191,7 @@ unconsPath (Path p) =
 
 {-
 
-Note that 'PathSegment' is qualified by a 'TyName':
+Note that 'PathSegmentRec' is qualified by a 'TyName':
 
 * This guarantees that there is no clash between fields with the same name
   across different types (that is, each type has its own namespace for fields).

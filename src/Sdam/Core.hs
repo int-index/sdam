@@ -43,6 +43,7 @@ import Data.Text (Text)
 import Data.String (IsString)
 import Control.Exception (ArithException(Underflow), throw)
 import GHC.Generics (Generic)
+import Text.Regex.Applicative (RE)
 
 import Sdam.Name
 
@@ -74,7 +75,7 @@ position:
 
   "FnApp" => TyRec "fn"  => Var | Lam | Num | ...
                    "arg" => Var | Lam | Num | ...
-  "Var"   => TyStr
+  "Var"   => TyStr /regex/
   "Lam"   => ...
   "Num"   => ...
 
@@ -112,12 +113,10 @@ language that is being described.
 -}
 
 newtype Schema = Schema { schemaTypes :: HashMap TyName Ty }
-  deriving newtype Show
 
 data Ty =
   TyRec (HashMap FieldName TyUnion) |
-  TyStr
-  deriving stock Show
+  TyStr (RE Char ())
 
 -- A | B | C | (D | E | F)*
 data TyUnion =

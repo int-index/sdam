@@ -12,7 +12,7 @@ library
     Sdam.Name
   build-depends:
     base, containers, unordered-containers, hashable, text, megaparsec,
-    parser-combinators, pretty
+    parser-combinators, regex-applicative, pretty
   hs-source-dirs: src
   default-language: Haskell2010
   ghc-options: -Wall -fno-warn-partial-type-signatures

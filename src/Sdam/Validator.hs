@@ -9,18 +9,21 @@ module Sdam.Validator
   ) where
 
 import Control.Arrow ((***))
+import Data.Text as Text
 import Data.List as List
 import Data.Foldable as Foldable
 import Data.HashMap.Strict as HashMap
 import Data.HashSet as HashSet
 import Data.Hashable (Hashable)
 import Data.Sequence (Seq)
+import Text.Regex.Applicative as RE
 import GHC.Generics (Generic)
 import Sdam.Core
 
 data ValidationError =
   UnknownTyName TyName |
   UnexpectedSeq |
+  RegexFail |
   TypeMismatch TyName TyUnion |
   ExpectedStrFoundRec TyName |
   ExpectedRecFoundStr TyName |
@@ -48,8 +51,8 @@ validate Schema{schemaTypes} = vValue Nothing
       ValidationValue ->
       ValidationResult
     vValue _ SkipValidation = mempty
-    vValue mTyU (ValidationValue (ValueStr tyName _)) =
-      vTyName tyName mTyU (\ty -> vStr tyName ty)
+    vValue mTyU (ValidationValue (ValueStr tyName str)) =
+      vTyName tyName mTyU (\ty -> vStr tyName ty str)
     vValue mTyU (ValidationValue (ValueRec tyName fields)) =
       vTyName tyName mTyU (\ty -> vRec tyName ty fields)
     vValue mTyU (ValidationValue (ValueSeq items)) =
@@ -77,9 +80,13 @@ validate Schema{schemaTypes} = vValue Nothing
     vStr ::
       TyName ->
       Ty ->
+      Text ->
       ValidationResult
-    vStr _ TyStr = mempty
-    vStr tyName (TyRec _) = validationError (ExpectedRecFoundStr tyName)
+    vStr _ (TyStr re) str =
+      case RE.match re (Text.unpack str) of
+        Just () -> mempty
+        Nothing -> validationError RegexFail
+    vStr tyName (TyRec _) _ = validationError (ExpectedRecFoundStr tyName)
 
     vSeq ::
       Maybe TyUnion ->
@@ -103,7 +110,7 @@ validate Schema{schemaTypes} = vValue Nothing
       Ty ->
       HashMap FieldName ValidationValue ->
       ValidationResult
-    vRec tyName TyStr _ = validationError (ExpectedStrFoundRec tyName)
+    vRec tyName (TyStr _) _ = validationError (ExpectedStrFoundRec tyName)
     vRec tyName (TyRec fieldTys) fields =
       let
         typedFields = HashMap.intersectionWith (,) fieldTys fields

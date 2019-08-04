@@ -24,7 +24,7 @@ data ValidationError =
   UnknownTyName TyName |
   UnexpectedSeq |
   RegexFail |
-  TypeMismatch TyName TyUnion |
+  TypeMismatch TyName (HashSet TyName) |
   ExpectedStrFoundRec TyName |
   ExpectedRecFoundStr TyName |
   RecMissingField FieldName |
@@ -72,10 +72,10 @@ validate Schema{schemaTypes} = vValue Nothing
           cont ty <>
           case mTyU of
             Nothing -> mempty
-            Just tyU@(TyUnion u _) ->
+            Just (TyUnion u _) ->
               if HashSet.member tyName u
               then mempty
-              else validationError (TypeMismatch tyName tyU)
+              else validationError (TypeMismatch tyName u)
 
     vStr ::
       TyName ->

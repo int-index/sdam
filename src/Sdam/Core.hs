@@ -15,6 +15,9 @@ module Sdam.Core
     Schema(..),
     Ty(..),
     TyUnion(..),
+    tyUnionSingleton,
+    tyUnionSequence,
+    tyUnionRecursiveSequence,
 
     -- * Values
     Value(..),
@@ -37,13 +40,14 @@ module Sdam.Core
 
 import Data.Hashable (Hashable)
 import Data.HashMap.Strict as HashMap
-import Data.HashSet (HashSet)
+import Data.HashSet as HashSet
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.String (IsString)
 import Control.Exception (ArithException(Underflow), throw)
 import GHC.Generics (Generic)
 import Text.Regex.Applicative (RE)
+import Data.Function (fix)
 
 import Sdam.Name
 
@@ -123,15 +127,28 @@ data TyUnion =
   TyUnion
     (HashSet TyName)   -- the types
     (Maybe TyUnion)    -- the (...)* clause
-  deriving stock (Show, Eq, Generic)
-
-instance Hashable TyUnion
+  --
+  -- No Show/Eq/Hashable/etc instances as it is a common use case to have an
+  -- infinite TyUnion (see tyUnionRecursiveSequence).
+  --
 
 instance Semigroup TyUnion where
   TyUnion u1 r1 <> TyUnion u2 r2 = TyUnion (u1 <> u2) (r1 <> r2)
 
 instance Monoid TyUnion where
   mempty = TyUnion mempty mempty
+
+tyUnionSingleton :: TyName -> TyUnion
+tyUnionSingleton t = TyUnion (HashSet.singleton t) Nothing
+
+tyUnionSequence :: TyUnion -> TyUnion
+tyUnionSequence u = TyUnion HashSet.empty (Just u)
+
+-- Arbitrarily nested elements.
+-- Note that this gives rise to an infinite TyUnion:
+--   A | B | ( A | B | ( A | B | ...)* )*
+tyUnionRecursiveSequence :: TyUnion -> TyUnion
+tyUnionRecursiveSequence u = fix (\r -> u <> tyUnionSequence r)
 
 --------------------------------------------------------------------------------
 -- Values

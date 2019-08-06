@@ -13,7 +13,7 @@ module Sdam.Core
 
     -- * Types
     Schema(..),
-    Ty(..),
+    TyDefn(..),
     TyUnion(..),
     tyUnionSingleton,
     tyUnionSequence,
@@ -116,9 +116,9 @@ language that is being described.
 
 -}
 
-newtype Schema = Schema { schemaTypes :: HashMap TyName Ty }
+newtype Schema = Schema { schemaTypes :: HashMap TyName TyDefn }
 
-data Ty =
+data TyDefn =
   TyRec (HashMap FieldName TyUnion) |
   TyStr (RE Char ())
 

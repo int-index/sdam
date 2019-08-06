@@ -63,7 +63,7 @@ validate Schema{schemaTypes} = vValue Nothing
     vTyName ::
       TyName ->
       Maybe TyUnion ->
-      (Ty -> ValidationResult) ->
+      (TyDefn -> ValidationResult) ->
       ValidationResult
     vTyName tyName mTyU cont =
       case HashMap.lookup tyName schemaTypes of
@@ -79,7 +79,7 @@ validate Schema{schemaTypes} = vValue Nothing
 
     vStr ::
       TyName ->
-      Ty ->
+      TyDefn ->
       Text ->
       ValidationResult
     vStr _ (TyStr re) str =
@@ -107,7 +107,7 @@ validate Schema{schemaTypes} = vValue Nothing
 
     vRec ::
       TyName ->
-      Ty ->
+      TyDefn ->
       HashMap FieldName ValidationValue ->
       ValidationResult
     vRec tyName (TyStr _) _ = validationError (ExpectedStrFoundRec tyName)

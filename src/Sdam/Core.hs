@@ -14,10 +14,13 @@ module Sdam.Core
     -- * Types
     Schema(..),
     TyDefn(..),
+    TyInst(..),
     TyUnion(..),
     tyUnionSingleton,
     tyUnionSequence,
     tyUnionRecursiveSequence,
+    BrokenSchema(..),
+    checkTyInst,
 
     -- * Values
     Value(..),
@@ -44,8 +47,9 @@ import Data.HashSet as HashSet
 import Data.Sequence (Seq)
 import Data.Text (Text)
 import Data.String (IsString)
-import Control.Exception (ArithException(Underflow), throw)
+import Control.Exception (Exception, ArithException(Underflow), throw)
 import GHC.Generics (Generic)
+import Control.Applicative ((<|>))
 import Text.Regex.Applicative (RE)
 import Data.Function (fix)
 
@@ -116,39 +120,85 @@ language that is being described.
 
 -}
 
-newtype Schema = Schema { schemaTypes :: HashMap TyName TyDefn }
+data Schema =
+  Schema
+    { schemaTypes :: HashMap TyName TyDefn,
+      schemaRoot :: TyUnion
+    }
 
 data TyDefn =
-  TyRec (HashMap FieldName TyUnion) |
-  TyStr (RE Char ())
+  TyDefnRec (HashSet FieldName) |
+  TyDefnStr
 
--- A | B | C | (D | E | F)*
+data TyInst =
+  -- {m:u,n:v}
+  TyInstRec (HashMap FieldName TyUnion) |
+  -- /regex/
+  TyInstStr (RE Char ())
+
+tyInstUnion :: TyName -> TyInst -> TyInst -> TyInst
+tyInstUnion _ (TyInstStr re1) (TyInstStr re2) = TyInstStr (re1 <|> re2)
+tyInstUnion _ (TyInstRec ks1) (TyInstRec ks2) = TyInstRec (HashMap.unionWith (<>) ks1 ks2)
+tyInstUnion tyName _ _ = throw (BrokenSchemaInstSemigroup tyName)
+
+-- A{m:u,n:v} | B/regex/ | (...)*
 data TyUnion =
   TyUnion
-    (HashSet TyName)   -- the types
-    (Maybe TyUnion)    -- the (...)* clause
+    (HashMap TyName TyInst)   -- the types
+    (Maybe TyUnion)           -- the (...)* clause
   --
   -- No Show/Eq/Hashable/etc instances as it is a common use case to have an
   -- infinite TyUnion (see tyUnionRecursiveSequence).
   --
 
 instance Semigroup TyUnion where
-  TyUnion u1 r1 <> TyUnion u2 r2 = TyUnion (u1 <> u2) (r1 <> r2)
+  TyUnion u1 r1 <> TyUnion u2 r2 =
+    TyUnion (HashMap.unionWithKey tyInstUnion u1 u2) (r1 <> r2)
 
 instance Monoid TyUnion where
   mempty = TyUnion mempty mempty
 
-tyUnionSingleton :: TyName -> TyUnion
-tyUnionSingleton t = TyUnion (HashSet.singleton t) Nothing
+tyUnionSingleton :: TyName -> TyInst -> TyUnion
+tyUnionSingleton name inst = TyUnion (HashMap.singleton name inst) Nothing
 
 tyUnionSequence :: TyUnion -> TyUnion
-tyUnionSequence u = TyUnion HashSet.empty (Just u)
+tyUnionSequence u = TyUnion HashMap.empty (Just u)
 
 -- Arbitrarily nested elements.
 -- Note that this gives rise to an infinite TyUnion:
 --   A | B | ( A | B | ( A | B | ...)* )*
 tyUnionRecursiveSequence :: TyUnion -> TyUnion
 tyUnionRecursiveSequence u = fix (\r -> u <> tyUnionSequence r)
+
+data BrokenSchema =
+  BrokenSchemaInstNotStr TyName |
+  BrokenSchemaInstNotRec TyName |
+  BrokenSchemaInstBadKeys TyName (HashSet FieldName) |
+  BrokenSchemaInstSemigroup TyName
+  deriving (Eq, Show)
+
+instance Exception BrokenSchema
+
+checkTyInst :: TyName -> TyDefn -> TyInst -> TyInst
+checkTyInst tyName tyDefn tyInst =
+  case mExc of
+    Nothing -> tyInst
+    Just e -> throw e
+  where
+    mExc =
+      case tyDefn of
+        TyDefnStr ->
+          case tyInst of
+            TyInstRec _ -> Just (BrokenSchemaInstNotStr tyName)
+            TyInstStr _ -> Nothing
+        TyDefnRec defnKeys ->
+          case tyInst of
+            TyInstStr _ -> Just (BrokenSchemaInstNotRec tyName)
+            TyInstRec instFields ->
+              let instKeys = HashMap.keysSet instFields in
+              if instKeys /= defnKeys
+              then Just (BrokenSchemaInstBadKeys tyName instKeys)
+              else Nothing
 
 --------------------------------------------------------------------------------
 -- Values

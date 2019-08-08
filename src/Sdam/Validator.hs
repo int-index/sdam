@@ -44,59 +44,54 @@ data ValidationValue =
   deriving stock Show
 
 validate :: Schema -> ValidationValue -> ValidationResult
-validate Schema{schemaTypes} = vValue Nothing
+validate Schema{schemaTypes, schemaRoot} = vValue schemaRoot
   where
     vValue ::
-      Maybe TyUnion ->
+      TyUnion ->
       ValidationValue ->
       ValidationResult
     vValue _ SkipValidation = mempty
-    vValue mTyU (ValidationValue (ValueStr tyName str)) =
-      vTyName tyName mTyU (\ty -> vStr tyName ty str)
-    vValue mTyU (ValidationValue (ValueRec tyName fields)) =
-      vTyName tyName mTyU (\ty -> vRec tyName ty fields)
-    vValue mTyU (ValidationValue (ValueSeq items)) =
-      case mTyU of
-        Nothing -> mempty
-        Just (TyUnion _ mItemTyU) -> vSeq mItemTyU items
+    vValue tyU (ValidationValue (ValueStr tyName str)) =
+      vTyName tyName tyU (\tyInst -> vStr tyName tyInst str)
+    vValue tyU (ValidationValue (ValueRec tyName fields)) =
+      vTyName tyName tyU (\tyInst -> vRec tyName tyInst fields)
+    vValue (TyUnion _ mItemTyU) (ValidationValue (ValueSeq items)) =
+      case mItemTyU of
+        Nothing -> validationError UnexpectedSeq
+        Just itemTyU -> vSeq itemTyU items
 
     vTyName ::
       TyName ->
-      Maybe TyUnion ->
-      (TyDefn -> ValidationResult) ->
+      TyUnion ->
+      (TyInst -> ValidationResult) ->
       ValidationResult
-    vTyName tyName mTyU cont =
+    vTyName tyName (TyUnion u _) cont =
       case HashMap.lookup tyName schemaTypes of
         Nothing -> validationError (UnknownTyName tyName)
-        Just ty ->
-          cont ty <>
-          case mTyU of
-            Nothing -> mempty
-            Just (TyUnion u _) ->
-              if HashSet.member tyName u
-              then mempty
-              else validationError (TypeMismatch tyName u)
+        Just tyDefn ->
+          case HashMap.lookup tyName u of
+            Nothing -> validationError (TypeMismatch tyName (HashMap.keysSet u))
+            Just tyInst -> cont (checkTyInst tyName tyDefn tyInst)
 
     vStr ::
       TyName ->
-      TyDefn ->
+      TyInst ->
       Text ->
       ValidationResult
-    vStr _ (TyStr re) str =
+    vStr _ (TyInstStr re) str =
       case RE.match re (Text.unpack str) of
         Just () -> mempty
         Nothing -> validationError RegexFail
-    vStr tyName (TyRec _) _ = validationError (ExpectedRecFoundStr tyName)
+    vStr tyName (TyInstRec _) _ = validationError (ExpectedRecFoundStr tyName)
 
     vSeq ::
-      Maybe TyUnion ->
+      TyUnion ->
       Seq ValidationValue ->
       ValidationResult
-    vSeq Nothing _ = validationError UnexpectedSeq
-    vSeq (Just itemTyU) items =
+    vSeq itemTyU items =
       let
         mkPathSegment i = PathSegmentSeq (intToIndex i)
-        vSeqItem = vValue (Just itemTyU)
+        vSeqItem = vValue itemTyU
         pathTrieRoot = mempty
         pathTrieChildren =
           HashMap.fromList $
@@ -107,17 +102,17 @@ validate Schema{schemaTypes} = vValue Nothing
 
     vRec ::
       TyName ->
-      TyDefn ->
+      TyInst ->
       HashMap FieldName ValidationValue ->
       ValidationResult
-    vRec tyName (TyStr _) _ = validationError (ExpectedStrFoundRec tyName)
-    vRec tyName (TyRec fieldTys) fields =
+    vRec tyName (TyInstStr _) _ = validationError (ExpectedStrFoundRec tyName)
+    vRec tyName (TyInstRec fieldTys) fields =
       let
         typedFields = HashMap.intersectionWith (,) fieldTys fields
         missingFields = HashMap.keys (HashMap.difference fieldTys typedFields)
         extraFields = HashMap.keys (HashMap.difference fields fieldTys)
         mkPathSegment fieldName = PathSegmentRec tyName fieldName
-        vRecField (fieldTyU, field) = vValue (Just fieldTyU) field
+        vRecField (fieldTyU, field) = vValue fieldTyU field
         pathTrieRoot =
           HashSet.fromList $
           List.map RecMissingField missingFields <>

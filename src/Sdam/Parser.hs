@@ -15,21 +15,12 @@ module Sdam.Parser
   ) where
 
 import Control.Monad
-import Data.HashMap.Strict (HashMap)
-import Data.Sequence (Seq)
-import Data.Text (Text)
-import Data.Maybe
-import qualified Data.HashMap.Strict as HashMap
-import qualified Data.Text as Text
-import GHC.Exts (IsList(fromList))
 import Data.Void
 
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Megaparsec.Char.Lexer as L
-import qualified Control.Monad.Combinators.NonEmpty as NonEmpty
 
-import Sdam.Name
 import Sdam.Core
 
 type Parser e = Parsec e String
@@ -46,20 +37,19 @@ pLexeme = L.lexeme pWhitespace
 pSymbol :: Ord e => String -> Parser e ()
 pSymbol s = void (L.symbol pWhitespace s)
 
-pComma :: Ord e => Parser e ()
-pComma = pSymbol ","
+pSynShape :: Ord e => Parser e SynShape
+pSynShape = parseSynShape <$> some pSynShapeChar
 
-pLetter :: Ord e => Parser e Letter
-pLetter = unsafeCharToLetter <$> letterChar
-
-pName :: Ord e => Parser e Name
-pName = Name <$> (NonEmpty.some pLetter `NonEmpty.sepBy1` char '-')
-
-pTyName :: Ord e => Parser e TyName
-pTyName = pLexeme (TyName <$> pName)
-
-pFieldName :: Ord e => Parser e FieldName
-pFieldName = pLexeme (FieldName <$> pName)
+pSynShapeChar :: Ord e => Parser e Char
+pSynShapeChar = char '\\' *> pEscaped <|> satisfy (not . needsEscape)
+  where
+    pEscaped = anySingle >>= withEscaped
+    withEscaped 'n' = return '\n'
+    withEscaped c
+      | needsEscape c = return c
+      | otherwise = fail ("Bad escape: " ++ show c)
+    needsEscape c =
+      c `elem` "\\\"(){}[]\n "
 
 --------------------------------------------------------------------------------
 -- Value
@@ -67,44 +57,28 @@ pFieldName = pLexeme (FieldName <$> pName)
 
 type ValueParseErr = Void
 
-newtype ParsedValue = ParsedValue (Value ParsedValue)
+newtype ParsedValue = ParsedValue (Syn ParsedValue)
   deriving newtype Show
 
 pValue :: Parser ValueParseErr ParsedValue
-pValue =
-  fmap ParsedValue $
-  (ValueSeq <$> pValueSeq) <|>
-  (pTyName >>= \tyName ->
-   ValueStr tyName <$> pValueStr <|>
-   ValueRec tyName <$> pValueRec)
+pValue = pValueRec <|> pValueRec0
 
-pValueSeq :: Parser ValueParseErr (Seq ParsedValue)
-pValueSeq =
-  between (pSymbol "[") (pSymbol "]") $
-  fromList <$> (pValue `sepBy` pComma)
+pValueRec0 :: Parser ValueParseErr ParsedValue
+pValueRec0 = do
+  shape <- pLexeme pSynShape
+  case synTryReconstruct shape [] of
+    Left _ -> fail "Not enough fields"
+    Right syn -> return (ParsedValue syn)
 
-pValueRec :: Parser ValueParseErr (HashMap FieldName ParsedValue)
+pValueRec :: Parser ValueParseErr ParsedValue
 pValueRec =
-  between (pSymbol "{") (pSymbol "}") $
-  HashMap.fromList <$> (pFieldDef `sepBy` pComma)
-
-pValueStr :: Parser ValueParseErr Text
-pValueStr = pLexeme $ do
-  void (char '\"')
-  Text.pack . catMaybes <$> manyTill pChar (char '\"')
-  where
-    pChar :: Parser ValueParseErr (Maybe Char)
-    pChar =
-      (Just <$> L.charLiteral) <|>
-      (Nothing <$ string "\\&") <|>
-      (Just <$> anySingle)
-
-pFieldDef :: Parser ValueParseErr (FieldName, ParsedValue)
-pFieldDef = do
-  fieldName <- pFieldName
-  pSymbol "="
-  value <- pValue
-  return (fieldName, value)
+  between (pSymbol "(") (pSymbol ")") $ do
+    shape <- pLexeme pSynShape
+    fields <- many pValue
+    case synTryReconstruct shape fields of
+      Left SynReconstructNotEnoughFields -> fail "Not enough fields"
+      Left SynReconstructTooManyFields -> fail "Too many fields"
+      Right syn -> return (ParsedValue syn)
 
 --------------------------------------------------------------------------------
 -- Value
@@ -113,15 +87,11 @@ pFieldDef = do
 type PathParseErr = Void
 
 pPath :: Parser PathParseErr Path
-pPath = Path <$> (pPathSegment `sepBy` char '/')
+pPath = Path <$> sepBy1 pPathSegment (pSymbol "/")
 
 pPathSegment :: Parser PathParseErr PathSegment
 pPathSegment =
-  let
-    pSeq = PathSegmentSeq . intToIndex <$> L.decimal
-    pRec =
-      PathSegmentRec
-        <$> (TyName <$> pName)
-        <*> (char '.' *> (FieldName <$> pName))
-  in
-    pSeq <|> pRec
+  pLexeme $ do
+    shape <- pLexeme pSynShape
+    i <- between (pSymbol "[") (pSymbol "]") L.decimal
+    return (PathSegment shape (intToIndex i))

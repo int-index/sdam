@@ -1,34 +1,69 @@
-{-# LANGUAGE LambdaCase, DerivingStrategies, RecordWildCards,
-             GeneralizedNewtypeDeriving, NamedFieldPuns, DeriveGeneric #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Sdam.Validator
-  ( ValidationError(..),
-    ValidationResult,
-    ValidationValue(..),
-    validate
-  ) where
+  ( -- * Schema
+    Schema (..),
+    TyUnion,
+    mkTyUnion,
 
-import Control.Arrow ((***))
-import Data.Text as Text
-import Data.List as List
+    -- * Validation
+    ValidationError (..),
+    ValidationResult,
+    ValidationValue (..),
+    validate,
+  )
+where
+
 import Data.Foldable as Foldable
 import Data.HashMap.Strict as HashMap
 import Data.HashSet as HashSet
 import Data.Hashable (Hashable)
-import Data.Sequence (Seq)
-import Text.Regex.Applicative as RE
+import Data.List as List
 import GHC.Generics (Generic)
 import Sdam.Core
+import Prelude hiding (seq)
 
-data ValidationError =
-  UnknownTyName TyName |
-  UnexpectedSeq |
-  RegexFail |
-  TypeMismatch TyName (HashSet TyName) |
-  ExpectedStrFoundRec TyName |
-  ExpectedRecFoundStr TyName |
-  RecMissingField FieldName |
-  RecExtraField FieldName
+data Schema
+  = Schema
+      { schemaShapes :: HashSet SynShape,
+        schemaRoot :: TyUnion,
+        schemaSeqGuard :: Char
+      }
+
+newtype TyUnion = TyUnion (HashMap SynShape [TyUnion])
+
+instance Semigroup TyUnion where
+  TyUnion u1 <> TyUnion u2 = TyUnion (HashMap.unionWith tyDescUnion u1 u2)
+    where
+      tyDescUnion :: [TyUnion] -> [TyUnion] -> [TyUnion]
+      tyDescUnion = List.zipWith (<>)
+
+instance Monoid TyUnion where
+  mempty = TyUnion HashMap.empty
+
+mkTyUnion :: SynShape -> [TyUnion] -> TyUnion
+mkTyUnion shape fields =
+  let syn = synReconstruct shape fields -- does arity validation
+   in TyUnion (HashMap.singleton (synShape syn) (synFields syn))
+
+isSeq :: Char -> Syn a -> Bool
+isSeq seqGuard syn =
+  case Foldable.toList (synTokens syn) of
+    (TokenChar c : ts) | c == seqGuard, all isTokenNode ts -> True
+    _ -> False
+  where
+    isTokenNode :: Token a -> Bool
+    isTokenNode (TokenChar _) = False
+    isTokenNode (TokenNode _) = True
+
+data ValidationError
+  = UnknownShape SynShape
+  | TypeMismatch SynShape (HashSet SynShape)
   deriving (Eq, Show, Generic)
 
 instance Hashable ValidationError
@@ -36,90 +71,70 @@ instance Hashable ValidationError
 type ValidationResult = PathTrie (HashSet ValidationError)
 
 validationError :: ValidationError -> ValidationResult
-validationError e = mempty{ pathTrieRoot = HashSet.singleton e }
+validationError e = mempty {pathTrieRoot = HashSet.singleton e}
 
-data ValidationValue =
-  ValidationValue (Value ValidationValue) |
-  SkipValidation
-  deriving stock Show
+data ValidationValue
+  = ValidationValue (Syn ValidationValue)
+  | SkipValidation
+  deriving stock (Show)
 
 validate :: Schema -> ValidationValue -> ValidationResult
-validate Schema{schemaTypes, schemaRoot} = vValue schemaRoot
+validate schema = vValue schemaRoot
   where
+    Schema {schemaShapes, schemaRoot, schemaSeqGuard} = schema
     vValue ::
       TyUnion ->
       ValidationValue ->
       ValidationResult
     vValue _ SkipValidation = mempty
-    vValue tyU (ValidationValue (ValueStr tyName str)) =
-      vTyName tyName tyU (\tyInst -> vStr tyName tyInst str)
-    vValue tyU (ValidationValue (ValueRec tyName fields)) =
-      vTyName tyName tyU (\tyInst -> vRec tyName tyInst fields)
-    vValue (TyUnion _ mItemTyU) (ValidationValue (ValueSeq items)) =
-      case mItemTyU of
-        Nothing -> validationError UnexpectedSeq
-        Just itemTyU -> vSeq itemTyU items
-
-    vTyName ::
-      TyName ->
+    vValue tyU (ValidationValue syn) =
+      let shape = synShape syn
+          fields = synFields syn
+       in if isSeq schemaSeqGuard syn
+            then vSeq shape tyU fields
+            else vShape shape tyU (\fieldTys -> vRec shape fieldTys fields)
+    vShape ::
+      SynShape ->
       TyUnion ->
-      (TyInst -> ValidationResult) ->
+      ([TyUnion] -> ValidationResult) ->
       ValidationResult
-    vTyName tyName (TyUnion u _) cont =
-      case HashMap.lookup tyName schemaTypes of
-        Nothing -> validationError (UnknownTyName tyName)
-        Just tyDefn ->
-          case HashMap.lookup tyName u of
-            Nothing -> validationError (TypeMismatch tyName (HashMap.keysSet u))
-            Just tyInst -> cont (checkTyInst tyName tyDefn tyInst)
-
-    vStr ::
-      TyName ->
-      TyInst ->
-      Text ->
-      ValidationResult
-    vStr _ (TyInstStr re) str =
-      case RE.match re (Text.unpack str) of
-        Just () -> mempty
-        Nothing -> validationError RegexFail
-    vStr tyName (TyInstRec _) _ = validationError (ExpectedRecFoundStr tyName)
-
-    vSeq ::
-      TyUnion ->
-      Seq ValidationValue ->
-      ValidationResult
-    vSeq itemTyU items =
-      let
-        mkPathSegment i = PathSegmentSeq (intToIndex i)
-        vSeqItem = vValue itemTyU
-        pathTrieRoot = mempty
-        pathTrieChildren =
-          HashMap.fromList $
-          List.map (mkPathSegment *** vSeqItem) $
-          List.zip [0..] (Foldable.toList items)
-      in
-        PathTrie{pathTrieRoot, pathTrieChildren}
-
+    vShape shape (TyUnion u) cont =
+      case HashSet.member shape schemaShapes of
+        False -> validationError (UnknownShape shape)
+        True ->
+          case HashMap.lookup shape u of
+            Nothing -> validationError (TypeMismatch shape (HashMap.keysSet u))
+            Just fieldTys -> cont fieldTys
     vRec ::
-      TyName ->
-      TyInst ->
-      HashMap FieldName ValidationValue ->
+      SynShape ->
+      [TyUnion] ->
+      [ValidationValue] ->
       ValidationResult
-    vRec tyName (TyInstStr _) _ = validationError (ExpectedStrFoundRec tyName)
-    vRec tyName (TyInstRec fieldTys) fields =
-      let
-        typedFields = HashMap.intersectionWith (,) fieldTys fields
-        missingFields = HashMap.keys (HashMap.difference fieldTys typedFields)
-        extraFields = HashMap.keys (HashMap.difference fields fieldTys)
-        mkPathSegment fieldName = PathSegmentRec tyName fieldName
-        vRecField (fieldTyU, field) = vValue fieldTyU field
-        pathTrieRoot =
-          HashSet.fromList $
-          List.map RecMissingField missingFields <>
-          List.map RecExtraField extraFields
-        pathTrieChildren =
-          HashMap.fromList $
-          List.map (mkPathSegment *** vRecField) $
-          HashMap.toList typedFields
-      in
-        PathTrie{pathTrieRoot, pathTrieChildren}
+    vRec shape fieldTys fields =
+      let mkPathSegment i = PathSegment shape (intToIndex i)
+          vField i ty fld = (mkPathSegment i, vValue ty fld)
+          pathTrieRoot = HashSet.empty
+          pathTrieChildren =
+            HashMap.fromList $
+              List.zipWith3
+                vField
+                [0 ..]
+                fieldTys
+                fields
+       in PathTrie {pathTrieRoot, pathTrieChildren}
+    vSeq ::
+      SynShape ->
+      TyUnion ->
+      [ValidationValue] ->
+      ValidationResult
+    vSeq shape ty fields =
+      let mkPathSegment i = PathSegment shape (intToIndex i)
+          vField i fld = (mkPathSegment i, vValue ty fld)
+          pathTrieRoot = HashSet.empty
+          pathTrieChildren =
+            HashMap.fromList $
+              List.zipWith
+                vField
+                [0 ..]
+                fields
+       in PathTrie {pathTrieRoot, pathTrieChildren}

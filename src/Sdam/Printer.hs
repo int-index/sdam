@@ -29,15 +29,14 @@ rSynShape = text . concatMap escape . flattenSynShape
       | needsEscape c = ['\\', c]
       | otherwise = [c]
     needsEscape c =
-      c `elem` "\\\"(){}[]\n "
+      c `elem` "\\\n "
 
 newtype RenderValue = RenderValue (Syn RenderValue)
   deriving newtype Show
 
 rValue :: RenderValue -> Doc
 rValue (RenderValue syn) =
-  (if null syn then id else parens) $
-  sep $ rSynShape (synShape syn) : map rValue (synFields syn)
+  hang (rSynShape (synShape syn)) 2 (sep (map rValue (synFields syn)))
 
 rPath :: Path -> Doc
 rPath (Path ps) =

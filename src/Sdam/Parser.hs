@@ -49,7 +49,7 @@ pSynShapeChar = char '\\' *> pEscaped <|> satisfy (not . needsEscape)
       | needsEscape c = return c
       | otherwise = fail ("Bad escape: " ++ show c)
     needsEscape c =
-      c `elem` "\\\"(){}[]\n "
+      c `elem` "\\\n "
 
 --------------------------------------------------------------------------------
 -- Value
@@ -61,24 +61,10 @@ newtype ParsedValue = ParsedValue (Syn ParsedValue)
   deriving newtype Show
 
 pValue :: Parser ValueParseErr ParsedValue
-pValue = pValueRec <|> pValueRec0
-
-pValueRec0 :: Parser ValueParseErr ParsedValue
-pValueRec0 = do
+pValue = do
   shape <- pLexeme pSynShape
-  case synTryReconstruct shape [] of
-    Left _ -> fail "Not enough fields"
-    Right syn -> return (ParsedValue syn)
-
-pValueRec :: Parser ValueParseErr ParsedValue
-pValueRec =
-  between (pSymbol "(") (pSymbol ")") $ do
-    shape <- pLexeme pSynShape
-    fields <- many pValue
-    case synTryReconstruct shape fields of
-      Left SynReconstructNotEnoughFields -> fail "Not enough fields"
-      Left SynReconstructTooManyFields -> fail "Too many fields"
-      Right syn -> return (ParsedValue syn)
+  fields <- count (length shape) pValue
+  return (ParsedValue (synReconstruct shape fields))
 
 --------------------------------------------------------------------------------
 -- Value
